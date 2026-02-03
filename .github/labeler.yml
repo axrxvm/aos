@@ -1,0 +1,44 @@
+# Auto-labeling configuration for PRs
+# See: https://github.com/actions/labeler
+
+'area: kernel':
+  - src/kernel/**/*
+  - include/kernel.h
+
+'area: memory':
+  - src/mm/**/*
+  - include/memory.h
+  - include/pmm.h
+  - include/vmm.h
+
+'area: filesystem':
+  - src/fs/**/*
+  - include/fs/**/*
+
+'area: networking':
+  - src/net/**/*
+  - include/net/**/*
+
+'area: drivers':
+  - src/dev/**/*
+  - include/dev/**/*
+
+'area: crypto':
+  - src/crypto/**/*
+  - include/crypto/**/*
+
+'area: build':
+  - Makefile
+  - linker.ld
+  - scripts/**/*
+  - .github/workflows/**/*
+
+'area: documentation':
+  - README.md
+  - '*.md'
+  - docs/**/*
+
+'dependencies':
+  - '**/package*.json'
+  - '**/requirements*.txt'
+  - '**/Makefile'

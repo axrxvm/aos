@@ -1,0 +1,186 @@
+name: PR Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  pr-checks:
+    name: Pull Request Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history for diff
+    
+    - name: Check PR title format
+      run: |
+        PR_TITLE="${{ github.event.pull_request.title }}"
+        echo "PR Title: $PR_TITLE"
+        
+        # Check for conventional commit format (as per CONTRIBUTING.md)
+        if [[ "$PR_TITLE" =~ ^(feat|fix|docs|refactor|perf|test|build|chore):[[:space:]].+ ]]; then
+          echo "✓ PR title follows conventional format from CONTRIBUTING.md"
+          
+          # Check length (should be under 72 chars)
+          if [ ${#PR_TITLE} -gt 72 ]; then
+            echo "⚠️  PR title exceeds 72 characters (${#PR_TITLE} chars)"
+            echo "   Please keep summary under 72 characters"
+            exit 1
+          fi
+        else
+          echo "❌ PR title must follow conventional commit format:"
+          echo "   <type>: <short summary in present tense>"
+          echo ""
+          echo "Valid types: feat, fix, docs, refactor, perf, test, build, chore"
+          echo "Examples:"
+          echo "  - feat: add TCP socket support"
+          echo "  - fix: resolve page fault in VFS lookup"
+          echo "  - docs: update memory map in README"
+          echo ""
+          echo "See CONTRIBUTING.md for details"
+          exit 1
+        fi
+    
+    - name: Check file changes
+      run: |
+        echo "Files changed in this PR:"
+        git diff --name-only origin/${{ github.base_ref }}..HEAD
+        
+        # Check if any kernel files were modified
+        KERNEL_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -c "^src/kernel/" || echo "0")
+        if [ "$KERNEL_CHANGED" -gt 0 ]; then
+          echo "⚠️  Kernel files modified - extra review recommended"
+        fi
+    
+    - name: Check for large files
+      run: |
+        echo "Checking for large files..."
+        LARGE_FILES=$(find . -type f -size +1M -not -path "./.git/*" -not -path "./build/*" || echo "")
+        if [ -n "$LARGE_FILES" ]; then
+          echo "⚠️  Large files detected:"
+          echo "$LARGE_FILES"
+        else
+          echo "✓ No large files detected"
+        fi
+    
+    - name: Verify copyright headers
+      run: |
+        echo "Checking copyright year in modified files..."
+        CURRENT_YEAR=$(date +%Y)
+        MISSING_HEADERS=0
+        
+        for file in $(git diff --name-only origin/${{ github.base_ref }}..HEAD | grep -E '\.(c|h)$'); do
+          if [ -f "$file" ]; then
+            # Check for required AOS header (per CONTRIBUTING.md)
+            if ! grep -q "=== AOS HEADER BEGIN ===" "$file"; then
+              echo "❌ $file is missing required AOS header"
+              MISSING_HEADERS=$((MISSING_HEADERS + 1))
+            elif ! grep -q "Copyright.*$CURRENT_YEAR" "$file"; then
+              echo "⚠️  $file may need copyright year update to $CURRENT_YEAR"
+            else
+              echo "✓ $file has proper header"
+            fi
+          fi
+        done
+        
+        if [ $MISSING_HEADERS -gt 0 ]; then
+          echo ""
+          echo "❌ $MISSING_HEADERS file(s) missing required AOS header"
+          echo "See CONTRIBUTING.md for header template"
+          exit 1
+        fi
+    
+    - name: Check code style compliance
+      run: |
+        echo "Checking code style (per CONTRIBUTING.md)..."
+        STYLE_ISSUES=0
+        
+        for file in $(git diff --name-only origin/${{ github.base_ref }}..HEAD | grep '\.c$'); do
+          if [ -f "$file" ]; then
+            echo "Checking $file..."
+            
+            # Check for tabs (should use 4 spaces)
+            if grep -q $'\t' "$file"; then
+              echo "⚠️  $file contains tabs - use 4 spaces for indentation"
+              STYLE_ISSUES=$((STYLE_ISSUES + 1))
+            fi
+            
+            # Check for camelCase functions (should be snake_case)
+            if grep -E '^[a-z]+[A-Z].*\(' "$file" > /dev/null; then
+              echo "⚠️  $file may contain camelCase functions - use snake_case"
+              STYLE_ISSUES=$((STYLE_ISSUES + 1))
+            fi
+          fi
+        done
+        
+        if [ $STYLE_ISSUES -eq 0 ]; then
+          echo "✓ No obvious style issues detected"
+        else
+          echo ""
+          echo "⚠️  Found $STYLE_ISSUES potential style issue(s)"
+          echo "Code style guidelines (CONTRIBUTING.md):"
+          echo "  - Use snake_case for functions and variables"
+          echo "  - K&R style braces (opening brace on same line)"
+          echo "  - 4 spaces for indentation (no tabs)"
+        fi
+    
+    - name: Check for proper fork workflow
+      run: |
+        # Verify PR is from a fork (best practice from CONTRIBUTING.md)
+        if [ "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]; then
+          echo "ℹ️  PR from branch in main repository"
+          echo "   Recommended: Fork the repository and create PR from fork"
+        else
+          echo "✓ PR from forked repository (recommended workflow)"
+        fi
+
+  label-pr:
+    name: Auto-label PR
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Label based on files changed
+      uses: actions/labeler@v5
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+  size-check:
+    name: Binary Size Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout PR branch
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-multilib g++-multilib nasm \
+          grub-pc-bin grub-common xorriso mtools
+    
+    - name: Build PR version
+      run: make iso
+    
+    - name: Check ISO size
+      run: |
+        PR_SIZE=$(stat -f%z build/aos.iso 2>/dev/null || stat -c%s build/aos.iso)
+        echo "PR ISO size: $(numfmt --to=iec-i --suffix=B $PR_SIZE)"
+        
+        # Warning if ISO is larger than 10MB
+        if [ $PR_SIZE -gt 10485760 ]; then
+          echo "⚠️  ISO size exceeds 10MB - consider optimization"
+        else
+          echo "✓ ISO size is reasonable"
+        fi
+        
+        echo "pr_size=$PR_SIZE" >> $GITHUB_ENV

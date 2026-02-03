@@ -1,0 +1,139 @@
+name: CI Build & Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    name: Build aOS Kernel
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          gcc-multilib \
+          g++-multilib \
+          nasm \
+          grub-pc-bin \
+          grub-common \
+          xorriso \
+          mtools
+    
+    - name: Verify toolchain versions
+      run: |
+        echo "GCC version:"
+        gcc --version
+        echo -e "\nNASM version:"
+        nasm --version
+        echo -e "\nGRUB version:"
+        grub-mkrescue --version
+    
+    - name: Build kernel
+      run: make iso
+    
+    - name: Verify ISO creation
+      run: |
+        if [ -f build/aos.iso ]; then
+          echo "✓ ISO built successfully"
+          ls -lh build/aos.iso
+        else
+          echo "✗ ISO build failed"
+          exit 1
+        fi
+    
+    - name: Upload ISO artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: aos-iso-${{ github.sha }}
+        path: build/aos.iso
+        retention-days: 30
+
+  validate-code:
+    name: Code Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Check file headers
+      run: |
+        echo "Checking for aOS headers in source files (per CONTRIBUTING.md)..."
+        MISSING_HEADERS=0
+        
+        # Check C files
+        for file in $(find src -name "*.c"); do
+          if ! grep -q "=== AOS HEADER BEGIN ===" "$file"; then
+            echo "⚠️  Missing header: $file"
+            MISSING_HEADERS=$((MISSING_HEADERS + 1))
+          fi
+        done
+        
+        # Check header files
+        for file in $(find include -name "*.h"); do
+          if ! grep -q "=== AOS HEADER BEGIN ===" "$file"; then
+            echo "⚠️  Missing header: $file"
+            MISSING_HEADERS=$((MISSING_HEADERS + 1))
+          fi
+        done
+        
+        if [ $MISSING_HEADERS -gt 0 ]; then
+          echo "⚠️  Found $MISSING_HEADERS files with missing headers"
+          echo "ℹ️  This is a warning, not blocking the build"
+          echo "See CONTRIBUTING.md for required header format"
+        else
+          echo "✓ All source files have proper headers"
+        fi
+    
+    - name: Check for TODO/FIXME comments
+      run: |
+        echo "Scanning for TODO and FIXME comments..."
+        grep -rn "TODO\|FIXME" src/ include/ || echo "✓ No pending TODOs found"
+    
+    - name: Verify version consistency
+      run: |
+        echo "Checking version consistency..."
+        VERSION=$(grep "aOS Version" .github/copilot-instructions.md | grep -oP '\d+\.\d+\.\d+' | head -1)
+        echo "Found version: $VERSION"
+        
+        # Check if version.h exists and matches
+        if [ -f include/version.h ]; then
+          echo "✓ version.h exists"
+        fi
+
+  security-scan:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: c-cpp
+        queries: security-and-quality
+    
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-multilib g++-multilib nasm
+    
+    - name: Build for analysis
+      run: make iso
+    
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3

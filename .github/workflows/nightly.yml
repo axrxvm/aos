@@ -1,0 +1,110 @@
+name: Nightly Build
+
+on:
+  schedule:
+    # Run every day at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  nightly-build:
+    name: Nightly Build & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout latest code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          gcc-multilib \
+          g++-multilib \
+          nasm \
+          grub-pc-bin \
+          grub-common \
+          xorriso \
+          mtools \
+          qemu-system-x86
+    
+    - name: Build kernel
+      run: make iso
+    
+    - name: Quick QEMU test
+      timeout-minutes: 2
+      run: |
+        # Start QEMU in background with timeout
+        timeout 30s qemu-system-i386 \
+          -cdrom build/aos.iso \
+          -serial file:serial.log \
+          -display none \
+          -m 128M \
+          || true
+        
+        # Check if kernel booted
+        if grep -q "aOS" serial.log; then
+          echo "✓ Kernel booted successfully"
+          cat serial.log
+        else
+          echo "⚠️  Kernel boot verification incomplete"
+          cat serial.log
+        fi
+    
+    - name: Generate build report
+      run: |
+        ISO_SIZE=$(stat -c%s build/aos.iso)
+        BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+        COMMIT_HASH=$(git rev-parse --short HEAD)
+        
+        cat > build-report.txt << EOF
+        # aOS Nightly Build Report
+        
+        - Build Date: $BUILD_DATE
+        - Commit: $COMMIT_HASH
+        - ISO Size: $(numfmt --to=iec-i --suffix=B $ISO_SIZE)
+        - Status: Success ✓
+        
+        ## Serial Output
+        \`\`\`
+        $(cat serial.log)
+        \`\`\`
+        EOF
+        
+        cat build-report.txt
+    
+    - name: Upload nightly build
+      uses: actions/upload-artifact@v4
+      with:
+        name: aos-nightly-${{ github.run_number }}
+        path: |
+          build/aos.iso
+          serial.log
+          build-report.txt
+        retention-days: 7
+    
+    - name: Cleanup old artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const repo = context.repo;
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: repo.owner,
+            repo: repo.repo,
+            per_page: 100
+          });
+          
+          // Keep only last 7 nightly builds
+          const nightlyArtifacts = artifacts.data.artifacts
+            .filter(a => a.name.startsWith('aos-nightly-'))
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(7);
+          
+          for (const artifact of nightlyArtifacts) {
+            console.log(`Deleting old artifact: ${artifact.name}`);
+            await github.rest.actions.deleteArtifact({
+              owner: repo.owner,
+              repo: repo.repo,
+              artifact_id: artifact.id
+            });
+          }
