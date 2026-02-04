@@ -29,6 +29,8 @@ static int shell_cancel_flag = 0;
 static char input_buffer[SHELL_INPUT_MAX];
 static uint32_t input_pos = 0;
 static uint32_t cursor_pos = 0;  // Current cursor position within input
+static uint8_t input_start_col = 0;  // Column where input starts on screen
+static uint8_t input_start_row = 0;  // Row where input starts on screen
 
 // Shell history
 static char history_buffer[SHELL_HISTORY_MAX][SHELL_INPUT_MAX];
@@ -48,23 +50,16 @@ extern int unformatted_disk_detected;
 
 // Helper function to redraw the input line with proper cursor positioning
 static void redraw_input_line(void) {
-    // Get current position
-    uint8_t current_row = vga_get_row();
-    uint8_t current_col = vga_get_col();
-    
-    // Calculate where the input starts (current column - cursor position)
-    uint8_t input_start_col = current_col - cursor_pos;
-    
     // Move to start of input
-    vga_set_position(current_row, input_start_col);
+    vga_set_position(input_start_row, input_start_col);
     
     // Clear to end of line by writing spaces (need to clear old content)
-    for (uint8_t i = 0; i < 80 - input_start_col; i++) {
+    for (uint8_t i = 0; i < VGA_WIDTH - input_start_col; i++) {
         vga_putc(' ');
     }
     
     // Go back to start of input
-    vga_set_position(current_row, input_start_col);
+    vga_set_position(input_start_row, input_start_col);
     
     // Redraw the entire input buffer
     for (uint32_t i = 0; i < input_pos; i++) {
@@ -72,7 +67,7 @@ static void redraw_input_line(void) {
     }
     
     // Position cursor at correct location
-    vga_set_position(current_row, input_start_col + cursor_pos);
+    vga_set_position(input_start_row, input_start_col + cursor_pos);
 }
 
 void shell_load_history(void) {
@@ -724,6 +719,10 @@ void shell_run(void) {
         memset(input_buffer, 0, sizeof(input_buffer));
         memset(current_input_backup, 0, sizeof(current_input_backup));
         
+        // Store where input begins on screen
+        input_start_row = vga_get_row();
+        input_start_col = vga_get_col();
+        
         while (1) {
             // Check for scheduled shutdown
             shell_check_scheduled_shutdown();
@@ -836,6 +835,9 @@ void shell_run(void) {
                     uint8_t col = vga_get_col();
                     if (col > 0) {
                         vga_set_position(row, col - 1);
+                    } else if (row > 0) {
+                        // Wrap to previous line
+                        vga_set_position(row - 1, VGA_WIDTH - 1);
                     }
                 }
                 continue;
@@ -848,7 +850,12 @@ void shell_run(void) {
                     // Move VGA cursor forward one position
                     uint8_t row = vga_get_row();
                     uint8_t col = vga_get_col();
-                    vga_set_position(row, col + 1);
+                    if (col < VGA_WIDTH - 1) {
+                        vga_set_position(row, col + 1);
+                    } else if (row < VGA_HEIGHT - 1) {
+                        // Wrap to next line
+                        vga_set_position(row + 1, 0);
+                    }
                 }
                 continue;
             }
