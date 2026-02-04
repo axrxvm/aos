@@ -41,9 +41,9 @@ jobs:
     
     - name: Verify ISO creation
       run: |
-        if [ -f build/aos.iso ]; then
+        if [ -f build/aOS.iso ]; then
           echo "✓ ISO built successfully"
-          ls -lh build/aos.iso
+          ls -lh build/aOS.iso
         else
           echo "✗ ISO build failed"
           exit 1
@@ -53,7 +53,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: aos-iso-${{ github.sha }}
-        path: build/aos.iso
+        path: build/aOS.iso
         retention-days: 30
 
   validate-code:
@@ -130,7 +130,7 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-multilib g++-multilib nasm
+        sudo apt-get install -y gcc-multilib g++-multilib nasm xorriso mtools
     
     - name: Build for analysis
       run: make iso

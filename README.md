@@ -40,35 +40,21 @@ aOS is a bare-metal, multiboot-compliant i386 (as of now) operating system kerne
 
 ### System Stack
 
-```
-┌─────────────────────────────────────┐
-│     Shell & Command Registry        │  60+ built-in commands
-├─────────────────────────────────────┤
-│    Application Protocols            │  HTTP, FTP, DNS, DHCP, TLS
-├─────────────────────────────────────┤
-│    Transport Layer                  │  TCP, UDP, Socket API
-├─────────────────────────────────────┤
-│    Network Layer                    │  IPv4, ICMP, ARP, NAT
-├─────────────────────────────────────┤
-│    Link Layer                       │  Ethernet, Loopback
-├─────────────────────────────────────┤
-│    Network Drivers                  │  E1000, PCnet (PCI)
-├─────────────────────────────────────┤
-│    VFS Layer                        │  Path resolution, vnodes, mounts
-├─────────────────────────────────────┤
-│    Filesystems                      │  ramfs, SimpleFS, devfs, procfs
-├─────────────────────────────────────┤
-│    Storage Drivers                  │  ATA/IDE PIO (512B sectors)
-├─────────────────────────────────────┤
-│    Process Management               │  Scheduling, fork/exec, IPC
-├─────────────────────────────────────┤
-│    Memory Management                │  PMM → Paging → VMM
-├─────────────────────────────────────┤
-│    Interrupt System                 │  IDT, PIC, ISRs, IRQs
-├─────────────────────────────────────┤
-│    Hardware Abstraction             │  CPU (GDT/IDT), Devices
-└─────────────────────────────────────┘
-```
+| Layer | Components |
+|-------|------------|
+| **Shell & Command Registry** | 50+ built-in commands |
+| **Application Protocols** | HTTP, FTP, DNS, DHCP, TLS |
+| **Transport Layer** | TCP, UDP, Socket API |
+| **Network Layer** | IPv4, ICMP, ARP, NAT |
+| **Link Layer** | Ethernet, Loopback |
+| **Network Drivers** | E1000, PCnet (PCI) |
+| **VFS Layer** | Path resolution, vnodes, mounts |
+| **Filesystems** | ramfs, SimpleFS, devfs, procfs |
+| **Storage Drivers** | ATA/IDE PIO (512B sectors) |
+| **Process Management** | Scheduling, fork/exec, IPC |
+| **Memory Management** | PMM → Paging → VMM |
+| **Interrupt System** | IDT, PIC, ISRs, IRQs |
+| **Hardware Abstraction** | CPU (GDT/IDT), Devices |
 
 ### Boot Sequence
 
@@ -204,7 +190,7 @@ aOS is a bare-metal, multiboot-compliant i386 (as of now) operating system kerne
 - Root (UID 0) with administrative privileges
 - User database persistence on formatted disk
 - Login shell with authentication
-- Default users: `root`, `user`
+- Default user: `root`
 
 #### Cage System (Sandboxing)
 
@@ -227,7 +213,7 @@ aOS's equivalent to chroot jails with enhanced isolation:
 
 **Dual Module System:**
 
-#### Traditional .akm Modules
+#### Traditional .akm Modules (v1)
 
 - ELF-like binary format with magic number `0x004D4B41`
 - Init/cleanup entry points
@@ -246,17 +232,17 @@ aOS's equivalent to chroot jails with enhanced isolation:
 
 **Module Operations:**
 
-- `lsmod` - List loaded modules
-- `insmod <path>` - Load module
-- `rmmod <name>` - Unload module
-- `modinfo <name>` - Display module metadata
+- `modlist` - List loaded modules
+- `modload <path>` - Load module
+- `modunload <name>` - Unload module
+- `kernelver` - Display kernel version
 
 ### aOS Package Manager (APM)
 
 **HTTP-based package distribution system:**
 
 - **Repository**: `http://repo.aosproject.workers.dev/main/i386`
-- **Package Format**: `.akm` kernel modules with JSON metadata
+- **Package Format**: APM currently supports managing   `.akm` kernel modules with JSON metadata
 - **Integrity**: SHA-256 checksum verification
 - **Caching**: Local repository list at `/sys/apm/kmodule.list.source`
 - **Storage**: Modules installed to `/sys/apm/modules/`
@@ -268,8 +254,8 @@ apm update                        # Fetch repository listing
 apm kmodule list                  # Show available modules
 apm kmodule list --installed      # Show installed modules
 apm kmodule info <name>           # Display module details
-apm kmodule install <name>        # Download, verify, install
-apm kmodule remove <name>         # Uninstall module
+apm kmodule install <name>        # Download, verify, install (alias: i)
+apm kmodule remove <name>         # Uninstall module (alias: u)
 ```
 
 ### Device Drivers
@@ -339,130 +325,133 @@ apm kmodule remove <name>         # Uninstall module
 
 ### Shell & Commands
 
-**Built-in shell with 60+ commands organized by category:**
+**Built-in shell with 50+ commands organized by category:**
 
 #### System
 
 ```bash
-help [category]    # Display all commands by category
-version            # Show OS version
-clear              # Clear screen
-echo               # Print text (supports -n, -e, -c flags)
-uptime             # System uptime in ticks
-reboot             # Warm reboot
-halt               # CPU halt
-shutdown           # ACPI poweroff (configurable delay)
+help [category]          # Display all commands by category
+version                  # Show OS version and build information
+clear                    # Clear screen and reset cursor
+echo [-n] [-e] [-c] <text> # Print text (-n: no newline, -e: escapes, -c: clear)
+uptime                   # System uptime in ticks
+reboot                   # Warm reboot
+halt                     # Halt CPU
+shutdown [-c] [+sec|now] # Power off (default: 20s, -c: cancel)
+poweroff [-c] [+sec|now] # Alias for shutdown
 ```
 
 #### Filesystem
 
 ```bash
-ls [path]          # List directory contents
-cd <path>          # Change directory
-pwd                # Print working directory
-mkdir <path>       # Create directory
-rmdir <path>       # Remove empty directory
-touch <path>       # Create empty file
-rm <path>          # Delete file
-cat <file>         # Display file contents
-cp <src> <dst>     # Copy file
-mv <src> <dst>     # Move/rename file
-tree [path]        # Directory tree view
-mount              # Show mount points
-format             # Format disk with SimpleFS
-editor <file>      # Simple line-based text editor
+lst [path]               # List directory contents
+view <file>              # Display file contents
+edit <file>              # Edit file in text editor
+create <file> [--empty]  # Create new file
+write <file> <content>   # Write content to file
+rm [--force] <path>      # Remove file or directory
+mkfld <dir>              # Create directory
+go <dir>                 # Change working directory
+pwd                      # Print working directory
+disk-info                # Display disk information
+format                   # Format disk with SimpleFS
+test-fs                  # Test VFS operations
+test-disk                # Test disk operations
 ```
 
 #### Process Management
 
 ```bash
-procs              # List active tasks
-terminate <pid>    # Kill process by ID
-pause <ms>         # Sleep milliseconds
-await <pid>        # Wait for process
-show <file>        # Display file (process context)
-chanmake           # Create IPC channel
-chaninfo           # Display IPC channels
+procs                    # List active tasks
+terminate <task_id>      # Terminate task by ID
+pause <milliseconds>     # Pause execution
+await <task_id>          # Wait for task completion
+show <filename>          # Display file contents
+chanmake                 # Create IPC channel
+chaninfo                 # Display IPC channels
 ```
 
 #### Memory
 
 ```bash
-meminfo            # Display memory statistics
-memmap             # Show memory layout
-memdump <addr> <n> # Hex dump physical memory
+mem                      # Display system memory
+vmm                      # Display virtual memory status
+showmem                  # Display memory usage
+test-page                # Test page allocation
 ```
 
 #### Network
 
 ```bash
-ifconfig           # Show/configure network interfaces
-ping <ip>          # ICMP echo request
-arp                # Display ARP cache
-route              # Show routing table
-netstat            # Network statistics
-socket             # Socket operations
-wget <url>         # HTTP download
-nslookup <domain>  # DNS query
-ftpget <url>       # FTP download
+ping <ip> [count]        # ICMP echo request
+ifconfig [iface]         # Show/configure network interfaces
+netstat                  # Display network connections
+arp [-d]                 # Display or clear ARP cache
+nslookup <hostname>      # Resolve hostname to IP
+dns [-c|-s <ip>]         # Configure DNS settings
+wget <url> [output]      # Download file via HTTP
+aurl [-v] <url>          # Advanced HTTP client
+ftp <command>            # FTP client
+dhcp [interface]         # Request IP via DHCP
+netconfig <iface> <cmd>  # Configure network interface
+hostname [name]          # Display or set hostname
 ```
 
 #### User Management
 
 ```bash
-whoami             # Current user
-useradd <user>     # Create user
-userdel <user>     # Delete user
-passwd [user]      # Change password
-login <user>       # Login as user
-logout             # Logout current user
-su <user>          # Switch user
+adduser <user> [--admin] # Create user account
+deluser <user>           # Delete user account
+listusers                # List all user accounts
+passwd                   # Change password
+fsmode                   # Display filesystem mode
 ```
 
 #### Security
 
 ```bash
-sandbox <args>     # Sandbox operations
-cage <args>        # Cage management
-chown <user> <file> # Change file owner
-chmod <mode> <file> # Change file permissions
+sandbox [pid]            # Sandbox operations
+cage <level>             # Set cage isolation level
+cageroot <path>          # Set cage root directory
+perms <path>             # Display file permissions
 ```
 
 #### Environment
 
 ```bash
-envars             # List environment variables
-setenv <name>=<val> # Set variable
-getenv <name>      # Get variable
+envars                   # List environment variables
+setenv <name>=<value>    # Set environment variable
+getenv <name>            # Get environment variable value
 ```
 
 #### Modules & Packages
 
 ```bash
-lsmod              # List loaded modules
-insmod <path>      # Load kernel module
-rmmod <name>       # Unload module
-modinfo <name>     # Module information
-apm update         # Update package repository
-apm kmodule list   # List available packages
+modlist                  # List loaded kernel modules
+modload <path>           # Load kernel module
+modunload <name>         # Unload kernel module
+kernelver                # Display kernel version
+apm update               # Update package repository
+apm kmodule list         # List available modules
+apm kmodule list --installed # List installed modules
+apm kmodule info <name>  # Show module information
+apm kmodule install <name> # Install module
+apm kmodule remove <name>  # Remove module
 ```
 
-#### Partition & Storage
+#### Partitions
 
 ```bash
-partlist           # List disk partitions
-partinfo <idx>     # Partition details
-partcreate <args>  # Create partition
-partdelete <idx>   # Delete partition
+partitions               # List disk partitions
+partmount <id> <path> <fs> # Mount partition
 ```
 
 #### Init System
 
 ```bash
-initctl list       # List services
-initctl start <svc> # Start service
-initctl stop <svc>  # Stop service
-initctl restart <svc> # Restart service
+initctl <cmd> [service]  # Control services (start/stop/restart/status/list)
+runlevel [level]         # Get or set runlevel (0-3)
+servicestat              # Show service status report
 ```
 
 ---
@@ -680,14 +669,6 @@ info mem           # Memory mappings
 info pic           # PIC state
 ```
 
-**Common Issues:**
-
-- **Triple fault**: Check paging setup, ensure identity mapping for kernel
-- **Page fault**: Verify virtual addresses, check permissions
-- **Keyboard not working**: Ensure polling in shell loop, check scancode translation
-- **Network not working**: Verify NIC detected with `lsmod`, check cable in QEMU settings
-- **Disk not found**: Use `make run-s` to attach disk image
-
 ---
 
 ## Architecture Support
@@ -708,48 +689,6 @@ To build for different architecture:
 make ARCH=i386 run    # Default
 make ARCH=x86_64 run  # Future
 ```
-
----
-
-## Constraints & Design Decisions
-
-### No Standard Library
-
-- **No libc**: All standard functions reimplemented in `src/lib/`
-- **No malloc from libc**: Custom `kmalloc()` in VMM
-- **No printf**: Custom `vga_puts()`, `serial_puts()`, formatting utilities
-
-### Freestanding Environment
-
-- **Compiler flags**: `-ffreestanding` - No hosted environment assumptions
-- **No startup files**: Custom `boot.s` entry point
-- **Direct hardware access**: Port I/O, MMIO, interrupt handling
-
-### Memory Architecture
-
-- **Identity mapped low memory**: First 8MB at same virtual/physical address
-- **Kernel heap constraints**: Fixed 2MB at `0x500000-0x6FFFFF`
-- **No floating point**: FPU not initialized (avoid in kernel code)
-
-### I/O Model
-
-- **Polling-based**: Keyboard, ATA use polling (simple, no IRQ conflicts)
-- **Interrupt-driven**: Timer (IRQ0), E1000 NIC (PCI MSI)
-- **No DMA yet**: All I/O via PIO or MMIO
-
-### Filesystem Limitations
-
-- **512-byte sectors**: ATA and SimpleFS both use 512B blocks
-- **SimpleFS**: Simple linked-list allocation, no extents or journaling
-- **No caching**: Direct disk I/O on every read/write
-
-### Network Stack
-
-- **No packet queuing**: Immediate processing on RX
-- **Limited TCP**: Basic implementation, no advanced features (SACK, window scaling)
-- **IPv4 only**: No IPv6 support
-
----
 
 ## Performance Characteristics
 
@@ -775,39 +714,6 @@ make ARCH=x86_64 run  # Future
 - Max processes: 256 (configurable)
 - Max files: Limited by filesystem capacity
 - Max modules: 32 (configurable)
-
----
-
-## Versioning & Roadmap
-
-**Current Version:** 0.8.8 "Modular"
-
-### Version History
-
-- **0.8.8**: Kernel module system v2 (AKM VM), enhanced package manager
-- **0.8.5**: aOS Package Manager (APM), HTTP/FTP clients, DNS resolver
-- **0.8.0**: Full networking stack (TCP/IP), E1000 driver
-- **0.7.3**: File permissions, sandboxing (Cage system)
-- **0.7.0**: User management, authentication
-- **0.6.0**: Process management, multi-tasking
-- **0.5.0**: Virtual File System, SimpleFS
-- **0.4.0**: Memory management (PMM, paging, VMM)
-- **0.3.0**: Interrupt system, device drivers
-- **0.2.0**: Basic shell, VGA text mode
-- **0.1.0**: Initial bootable kernel
-
-### Future Plans (0.9.x - 1.0)
-
-- **SMP**: Multi-processor support
-- **Advanced scheduling**: CFS-like algorithm
-- **Ext2 filesystem**: Standard Linux filesystem
-- **USB stack**: USB 2.0 host controller drivers
-- **GUI**: Framebuffer graphics, window manager
-- **POSIX compliance**: Broader system call coverage
-- **Dynamic linking**: Shared libraries for userspace
-- **IPv6**: Dual-stack networking
-
----
 
 ## License
 
