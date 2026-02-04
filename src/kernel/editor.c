@@ -287,14 +287,24 @@ void editor_new_line(editor_context_t* ctx) {
 
 // Move cursor
 void editor_move_cursor(editor_context_t* ctx, int dx, int dy) {
-    // Move vertical
+    // Ensure ctx is valid and has at least one line
+    if (!ctx || ctx->num_lines == 0) {
+        return;
+    }
+    
+    // Move vertical first
     if (dy < 0 && ctx->cursor_line > 0) {
         ctx->cursor_line--;
     } else if (dy > 0 && ctx->cursor_line < ctx->num_lines - 1) {
         ctx->cursor_line++;
     }
     
-    // Clamp horizontal position to line length
+    // Ensure cursor_line is within bounds
+    if (ctx->cursor_line >= ctx->num_lines) {
+        ctx->cursor_line = ctx->num_lines - 1;
+    }
+    
+    // Get current line and ensure cursor_col is within bounds
     editor_line_t* line = &ctx->lines[ctx->cursor_line];
     if (ctx->cursor_col > line->length) {
         ctx->cursor_col = line->length;
@@ -303,27 +313,55 @@ void editor_move_cursor(editor_context_t* ctx, int dx, int dy) {
     // Move horizontal
     if (dx < 0 && ctx->cursor_col > 0) {
         ctx->cursor_col--;
-    } else if (dx > 0 && ctx->cursor_col < line->length) {
-        ctx->cursor_col++;
+    } else if (dx > 0) {
+        // Allow cursor to move one past the end of the line (for insertion)
+        if (ctx->cursor_col < line->length) {
+            ctx->cursor_col++;
+        }
     }
     
+    // Final bounds check
+    if (ctx->cursor_col > line->length) {
+        ctx->cursor_col = line->length;
+    }
+    
+    // Scroll viewport to keep cursor visible
     editor_scroll_to_cursor(ctx);
 }
 
 // Scroll viewport to keep cursor visible
 void editor_scroll_to_cursor(editor_context_t* ctx) {
-    // Vertical scrolling
+    if (!ctx || ctx->num_lines == 0) {
+        return;
+    }
+    
+    // Ensure cursor is within valid bounds first
+    if (ctx->cursor_line >= ctx->num_lines) {
+        ctx->cursor_line = ctx->num_lines - 1;
+    }
+    
+    // Vertical scrolling - keep cursor visible
     if (ctx->cursor_line < ctx->view_line) {
         ctx->view_line = ctx->cursor_line;
     } else if (ctx->cursor_line >= ctx->view_line + EDITOR_DISPLAY_HEIGHT) {
         ctx->view_line = ctx->cursor_line - EDITOR_DISPLAY_HEIGHT + 1;
     }
     
-    // Horizontal scrolling
+    // Ensure view_line doesn't go negative or too far
+    if (ctx->view_line > ctx->num_lines) {
+        ctx->view_line = 0;
+    }
+    
+    // Horizontal scrolling - keep cursor visible
     if (ctx->cursor_col < ctx->view_col) {
         ctx->view_col = ctx->cursor_col;
     } else if (ctx->cursor_col >= ctx->view_col + EDITOR_DISPLAY_WIDTH) {
         ctx->view_col = ctx->cursor_col - EDITOR_DISPLAY_WIDTH + 1;
+    }
+    
+    // Ensure view_col doesn't go negative
+    if (ctx->view_col > EDITOR_MAX_LINE_LENGTH) {
+        ctx->view_col = 0;
     }
 }
 
@@ -331,20 +369,44 @@ void editor_scroll_to_cursor(editor_context_t* ctx) {
 void editor_display(editor_context_t* ctx) {
     editor_clear_screen();
     
+    // Calculate cursor screen position for visual indicator
+    int32_t cursor_screen_row = -1;
+    int32_t cursor_screen_col = -1;
+    if (ctx->cursor_line >= ctx->view_line && ctx->cursor_line < ctx->view_line + EDITOR_DISPLAY_HEIGHT) {
+        cursor_screen_row = ctx->cursor_line - ctx->view_line;
+        if (ctx->cursor_col >= ctx->view_col && ctx->cursor_col < ctx->view_col + EDITOR_DISPLAY_WIDTH) {
+            cursor_screen_col = ctx->cursor_col - ctx->view_col;
+        }
+    }
+    
     // Draw file content
     uint32_t line_count = 0;
     for (uint32_t i = ctx->view_line; i < ctx->num_lines && line_count < EDITOR_DISPLAY_HEIGHT; i++) {
         editor_line_t* line = &ctx->lines[i];
         
-        // Draw line number (if visible)
-        char line_num_str[8];
-        itoa(i + 1, line_num_str, 10);
-        
         // Draw line content (with scrolling)
         uint32_t col = 0;
         for (uint32_t j = ctx->view_col; j < line->length && col < EDITOR_DISPLAY_WIDTH; j++) {
-            editor_putc_at(line_count, col, line->data[j]);
+            char c = line->data[j];
+            
+            // Check if this is the cursor position - if so, draw with inverted colors
+            if (line_count == cursor_screen_row && col == cursor_screen_col) {
+                uint16_t* buffer = vga_get_buffer();
+                uint32_t pos = line_count * 80 + col;
+                // Inverted colors: 0x70 = white background, black foreground
+                buffer[pos] = ((0x70) << 8) | c;
+            } else {
+                editor_putc_at(line_count, col, c);
+            }
             col++;
+        }
+        
+        // Draw cursor if it's at the end of this line (after last character)
+        if (line_count == cursor_screen_row && col == cursor_screen_col) {
+            uint16_t* buffer = vga_get_buffer();
+            uint32_t pos = line_count * 80 + col;
+            // Inverted space character to show cursor position
+            buffer[pos] = ((0x70) << 8) | ' ';
         }
         
         // Clear rest of line
@@ -368,12 +430,16 @@ void editor_display(editor_context_t* ctx) {
     editor_display_status_bar(ctx);
     
     // Update hardware cursor position based on visible cursor location
-    if (ctx->cursor_line >= ctx->view_line && ctx->cursor_line < ctx->view_line + EDITOR_DISPLAY_HEIGHT) {
-        uint8_t screen_row = ctx->cursor_line - ctx->view_line;
-        uint8_t screen_col = (ctx->cursor_col >= ctx->view_col) ? (ctx->cursor_col - ctx->view_col) : 0;
-        if (screen_col < EDITOR_DISPLAY_WIDTH) {
-            update_cursor(screen_row, screen_col);
-        }
+    // Ensure cursor is always within valid screen bounds
+    if (cursor_screen_row >= 0 && cursor_screen_row < EDITOR_DISPLAY_HEIGHT) {
+        uint8_t screen_row = (uint8_t)cursor_screen_row;
+        uint8_t screen_col = (cursor_screen_col >= 0 && cursor_screen_col < EDITOR_DISPLAY_WIDTH) ? 
+                             (uint8_t)cursor_screen_col : 0;
+        update_cursor(screen_row, screen_col);
+    } else {
+        // Cursor is off-screen, hide it temporarily
+        // Position it at a safe location (bottom right of edit area)
+        update_cursor(EDITOR_DISPLAY_HEIGHT - 1, EDITOR_DISPLAY_WIDTH - 1);
     }
 }
 
@@ -495,11 +561,23 @@ void editor_run(editor_context_t* ctx) {
     ctx->mode = EDITOR_EDIT;
     int needs_redraw = 1;  // Force initial redraw
     
-    // Initialize cursor for editor with blinking
+    // Initialize cursor for editor with blinking underline style for better visibility
     vga_set_cursor_style(CURSOR_BLINK);
     vga_enable_cursor();
     
+    // Ensure cursor is at a valid position
+    if (ctx->cursor_line >= ctx->num_lines) {
+        ctx->cursor_line = (ctx->num_lines > 0) ? (ctx->num_lines - 1) : 0;
+    }
+    if (ctx->cursor_col > ctx->lines[ctx->cursor_line].length) {
+        ctx->cursor_col = ctx->lines[ctx->cursor_line].length;
+    }
+    
+    // Ensure viewport shows the cursor
+    editor_scroll_to_cursor(ctx);
+    
     serial_puts("Editor started. Use Ctrl+S to save, Ctrl+X to exit\n");
+    serial_puts("Cursor: Use arrow keys to move, characters insert at cursor position\n");
     
     while (ctx->mode == EDITOR_EDIT) {
         // Only redraw if content changed

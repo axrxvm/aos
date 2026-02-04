@@ -39,11 +39,13 @@ typedef struct {
     uint32_t num_lines;
     uint32_t max_lines;
     
-    // Cursor position
+    // Cursor position (in file coordinates, not screen coordinates)
+    // cursor_line: which line the cursor is on (0-based)
+    // cursor_col: which column the cursor is at (0-based, can be at line->length for append)
     uint32_t cursor_line;
     uint32_t cursor_col;
     
-    // Viewport
+    // Viewport (controls which part of the file is visible on screen)
     uint32_t view_line;      // First line visible on screen
     uint32_t view_col;       // First column visible on screen
     
