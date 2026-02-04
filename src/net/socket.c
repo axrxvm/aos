@@ -16,9 +16,6 @@
 // Socket table
 static socket_t socket_table[MAX_SOCKETS];
 
-// Next available socket descriptor
-static int next_sockfd = 0;
-
 int socket_create(int domain, int type, int protocol) {
     if (domain != AF_INET) {
         serial_puts("Socket: Unsupported address family\n");

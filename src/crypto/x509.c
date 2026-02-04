@@ -122,7 +122,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip version (CONTEXT [0] EXPLICIT)
     if (ptr[0] == ASN1_CONTEXT_SPECIFIC_0) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -130,7 +130,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip serialNumber (INTEGER)
     if (ptr[0] == ASN1_INTEGER) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -138,7 +138,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip signature (SEQUENCE)
     if (ptr[0] == ASN1_SEQUENCE) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -146,7 +146,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip issuer (SEQUENCE)
     if (ptr[0] == ASN1_SEQUENCE) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -154,7 +154,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip validity (SEQUENCE)
     if (ptr[0] == ASN1_SEQUENCE) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -162,7 +162,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip subject (SEQUENCE)
     if (ptr[0] == ASN1_SEQUENCE) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -180,7 +180,7 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
     
     // Skip algorithm (SEQUENCE)
     if (ptr[0] == ASN1_SEQUENCE) {
-        uint32_t tag, length, header_len;
+        uint32_t tag = 0, length = 0, header_len = 0;
         asn1_get_tag_length(ptr, &tag, &length, &header_len);
         ptr += header_len + length;
         remaining -= header_len + length;
@@ -192,12 +192,12 @@ int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
         return -1;
     }
     
-    uint32_t tag, length, header_len;
+    uint32_t tag = 0, length = 0, header_len = 0;
     asn1_get_tag_length(ptr, &tag, &length, &header_len);
     ptr += header_len;
     
     // Skip unused bits byte
-    uint8_t unused_bits = ptr[0];
+    (void)ptr[0];  // unused_bits - suppress warning
     ptr++;
     length--;
     

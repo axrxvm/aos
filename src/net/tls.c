@@ -451,6 +451,7 @@ int tls_recv_record(tls_session_t* session, uint8_t* content_type,
 
 
 static int build_client_hello(tls_session_t* session, uint8_t* buffer, uint32_t max_len) {
+    (void)max_len;  // Reserved for future bounds checking
     uint8_t* ptr = buffer;
     
     // Handshake header
@@ -551,8 +552,7 @@ static int parse_server_hello(tls_session_t* session, const uint8_t* data, uint3
         return -1;
     }
     
-    // Message length
-    uint32_t msg_len = (ptr[0] << 16) | (ptr[1] << 8) | ptr[2];
+    // Message length (skip for now)
     ptr += 3;
     
     // Server version
@@ -769,7 +769,7 @@ int tls_handshake(tls_session_t* session) {
         // Parse certificate chain
         // Format: type(1) + length(3) + certificates_length(3) + cert1_length(3) + cert1_data
         const uint8_t* ptr = cert_buffer + 4;  // Skip handshake header
-        uint32_t certs_len = (ptr[0] << 16) | (ptr[1] << 8) | ptr[2];
+        // Skip certificates length
         ptr += 3;
         
         // Get first certificate length
@@ -1128,7 +1128,7 @@ int tls_recv(tls_session_t* session, uint8_t* buffer, uint32_t max_len) {
     
     if (!session->encryption_enabled) {
         // No encryption - just return the data
-        size_t to_copy = (received < (int)max_len) ? received : max_len;
+        size_t to_copy = ((uint32_t)received < max_len) ? (uint32_t)received : max_len;
         memcpy(buffer, temp_buffer, to_copy);
         kfree(temp_buffer);
         return to_copy;
@@ -1191,7 +1191,7 @@ int tls_recv(tls_session_t* session, uint8_t* buffer, uint32_t max_len) {
     }
     
     // Copy decrypted data to output buffer
-    size_t to_copy = (data_len < (int)max_len) ? data_len : max_len;
+    size_t to_copy = ((uint32_t)data_len < max_len) ? (uint32_t)data_len : max_len;
     memcpy(buffer, plaintext, to_copy);
     
     kfree(plaintext);

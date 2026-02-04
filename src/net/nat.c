@@ -427,6 +427,7 @@ static ipv4_header_t* get_ip_header(net_packet_t* packet) {
 
 // Helper to get TCP header from packet
 static tcp_header_t* get_tcp_header(net_packet_t* packet, ipv4_header_t* ip) {
+    (void)packet;  // Reserved for future packet validation
     if (!ip || ip->protocol != NAT_PROTO_TCP) return NULL;
     
     uint8_t ihl = (ip->version_ihl & 0x0F) * 4;
@@ -435,6 +436,7 @@ static tcp_header_t* get_tcp_header(net_packet_t* packet, ipv4_header_t* ip) {
 
 // Helper to get UDP header from packet
 static udp_header_t* get_udp_header(net_packet_t* packet, ipv4_header_t* ip) {
+    (void)packet;  // Reserved for future packet validation
     if (!ip || ip->protocol != NAT_PROTO_UDP) return NULL;
     
     uint8_t ihl = (ip->version_ihl & 0x0F) * 4;

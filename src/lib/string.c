@@ -286,9 +286,7 @@ int snprintf(char *str, size_t size, const char *format, ...) {
             switch (*fmt) {
                 case 'd': {
                     int val = __builtin_va_arg(args, int);
-                    char buf[32];
                     // Simple itoa-like conversion
-                    char *p = buf;
                     int num = val;
                     if (num < 0) {
                         if (remaining > 0) {
@@ -338,7 +336,6 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                 case 'x': {
                     unsigned int val = __builtin_va_arg(args, unsigned int);
                     const char *hex = "0123456789abcdef";
-                    unsigned int mask = 0xF0000000;
                     int started = 0;
                     for (int i = 0; i < 8; i++) {
                         unsigned char digit = (val >> (28 - i * 4)) & 0xF;

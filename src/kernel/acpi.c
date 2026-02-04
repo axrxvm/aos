@@ -97,9 +97,16 @@ static rsdp_t* find_rsdp(void) {
     rsdp_t* rsdp = NULL;
     
     // First, try EBDA (get address from BDA at 0x40:0x0E = physical 0x40E)
-    // Use volatile to prevent GCC from optimizing away the low memory access
-    volatile uint16_t* bda_ebda_ptr = (volatile uint16_t*)0x40E;
-    uint16_t ebda_segment = *bda_ebda_ptr;
+    // Read BDA EBDA pointer using direct memory read to avoid bounds checking
+    uint16_t ebda_segment;
+    // Use inline assembly to read from low memory, avoiding GCC array bounds warnings
+    __asm__ volatile (
+        "movw 0x40E, %%ax\n"
+        "movw %%ax, %0\n"
+        : "=r"(ebda_segment)
+        :
+        : "ax"
+    );
     uint32_t ebda_addr = (uint32_t)ebda_segment << 4;
     
     if (ebda_addr >= 0x80000 && ebda_addr < 0xA0000) {

@@ -842,7 +842,9 @@ int kmodule_load_v2(const void* data, size_t len) {
         entry->base.cleanup = (module_cleanup_fn)((char*)entry->base.code_base + hdr->cleanup_offset);
         
         if (entry->base.init) {
-            kmod_init_fn v2_init = (kmod_init_fn)entry->base.init;
+            // Use proper function pointer cast to avoid -Wcast-function-type
+            kmod_init_fn v2_init;
+            *(void**)(&v2_init) = (void*)entry->base.init;
             result = v2_init(&entry->context);
             
             if (result != 0) {

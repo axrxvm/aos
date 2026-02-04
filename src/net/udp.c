@@ -216,8 +216,7 @@ int udp_socket_sendto(udp_socket_t* sock, const uint8_t* data, uint32_t len,
         return -1;
     }
     
-    // Use bound IP or interface IP
-    uint32_t src_ip = sock->bound ? sock->local_ip : iface->ip_addr;
+    // Use bound port
     uint16_t src_port = sock->local_port;
     
     // Build UDP packet
