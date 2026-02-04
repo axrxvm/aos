@@ -36,7 +36,7 @@ jobs:
       run: |
         # Start QEMU in background with timeout
         timeout 30s qemu-system-i386 \
-          -cdrom build/aos.iso \
+          -cdrom build/aOS.iso \
           -serial file:serial.log \
           -display none \
           -m 128M \
@@ -78,7 +78,7 @@ jobs:
       with:
         name: aos-nightly-${{ github.run_number }}
         path: |
-          build/aos.iso
+          build/aOS.iso
           serial.log
           build-report.txt
         retention-days: 7

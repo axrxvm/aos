@@ -1,0 +1,169 @@
+name: Release Build
+
+on:
+  push:
+    branches: [ main ]
+
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Force official release even if version numbers did not change"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release aOS
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0   # Required for tag + diff safety
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          gcc-multilib \
+          g++-multilib \
+          nasm \
+          grub-pc-bin \
+          grub-common \
+          xorriso \
+          mtools
+
+    - name: Extract version from version.h
+      id: version
+      run: |
+        MAJOR=$(grep "AOS_VERSION_MAJOR" include/version.h | grep -oP '\d+')
+        MINOR=$(grep "AOS_VERSION_MINOR" include/version.h | grep -oP '\d+')
+        PATCH=$(grep "AOS_VERSION_PATCH" include/version.h | grep -oP '\d+')
+        VERSION="${MAJOR}.${MINOR}.${PATCH}"
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "Detected version: ${VERSION}"
+
+    - name: Check if version.h changed
+      id: version_changed
+      run: |
+        if git diff ${{ github.event.before || 'HEAD~1' }} ${{ github.sha }} --name-only | \
+           grep -q "^include/version.h$"; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Check if version numbers changed
+      id: version_numbers_changed
+      run: |
+        if git diff ${{ github.event.before || 'HEAD~1' }} ${{ github.sha }} -U0 include/version.h | \
+           grep -E '^\+.*AOS_VERSION_(MAJOR|MINOR|PATCH)'; then
+          echo "changed=true" >> $GITHUB_OUTPUT
+        else
+          echo "changed=false" >> $GITHUB_OUTPUT
+        fi
+
+    # Enforce version bump discipline (pushes only)
+    - name: Enforce version bump when version.h changes
+      if: |
+        github.event_name == 'push' &&
+        steps.version_changed.outputs.changed == 'true' &&
+        steps.version_numbers_changed.outputs.changed == 'false'
+      run: |
+        echo "❌ include/version.h was modified without bumping MAJOR/MINOR/PATCH"
+        exit 1
+
+    - name: Generate build metadata
+      id: metadata
+      run: |
+        SHORT_SHA=$(git rev-parse --short=7 HEAD)
+        DATE=$(date +%Y%m%d)
+        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+        echo "date=${DATE}" >> $GITHUB_OUTPUT
+
+    - name: Build kernel
+      run: make iso
+
+    - name: Verify ISO creation
+      run: |
+        test -f build/aOS.iso || exit 1
+        ls -lh build/aOS.iso
+
+    # Tier 1: Development build (always)
+    - name: Rename ISO for development build
+      run: |
+        DEV_NAME="aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso"
+        cp build/aOS.iso "build/${DEV_NAME}"
+
+    - name: Upload development build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}
+        path: build/aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso
+        retention-days: 10
+
+    # Prevent duplicate release tags
+    - name: Check if release tag already exists
+      id: tag_check
+      run: |
+        if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+          echo "exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    # Tier 2: Official release (automatic OR forced)
+    - name: Rename ISO for official release
+      if: |
+        (
+          steps.version_numbers_changed.outputs.changed == 'true' ||
+          github.event.inputs.force_release == 'true'
+        ) &&
+        steps.tag_check.outputs.exists == 'false'
+      run: |
+        RELEASE_NAME="aOS-${{ steps.version.outputs.version }}-stable.iso"
+        cp build/aOS.iso "build/${RELEASE_NAME}"
+
+    - name: Create GitHub Release
+      if: |
+        (
+          steps.version_numbers_changed.outputs.changed == 'true' ||
+          github.event.inputs.force_release == 'true'
+        ) &&
+        steps.tag_check.outputs.exists == 'false'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: aOS v${{ steps.version.outputs.version }}
+        body: |
+          # aOS v${{ steps.version.outputs.version }}
+
+          ## Build Information
+          - **Version**: ${{ steps.version.outputs.version }}
+          - **Commit**: ${{ github.sha }}
+          - **Build Date**: ${{ steps.metadata.outputs.date }}
+
+          ---
+          *Release generated automatically or via manual trigger.*
+        files: build/aOS-${{ steps.version.outputs.version }}-stable.iso
+        fail_on_unmatched_files: true
+
+    - name: Build summary
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- Version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Commit: ${{ steps.metadata.outputs.short_sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Date: ${{ steps.metadata.outputs.date }}" >> $GITHUB_STEP_SUMMARY
+
+        if [ "${{ github.event.inputs.force_release }}" == "true" ]; then
+          echo "🚨 **Manual Forced Release**" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ steps.version_numbers_changed.outputs.changed }}" == "true" ]; then
+          echo "✅ **Official Release Created**" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "📦 **Development Build Only**" >> $GITHUB_STEP_SUMMARY
+        fi

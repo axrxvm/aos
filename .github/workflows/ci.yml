@@ -1,14 +1,14 @@
-name: CI Build & Validation
+name: CI Validation
 
 on:
-  push:
-    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  push:
+    branches: [ develop ]
 
 jobs:
-  build:
-    name: Build aOS Kernel
+  build-test:
+    name: Build Test
     runs-on: ubuntu-latest
     
     steps:
@@ -27,15 +27,6 @@ jobs:
           xorriso \
           mtools
     
-    - name: Verify toolchain versions
-      run: |
-        echo "GCC version:"
-        gcc --version
-        echo -e "\nNASM version:"
-        nasm --version
-        echo -e "\nGRUB version:"
-        grub-mkrescue --version
-    
     - name: Build kernel
       run: make iso
     
@@ -48,13 +39,6 @@ jobs:
           echo "✗ ISO build failed"
           exit 1
         fi
-    
-    - name: Upload ISO artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: aos-iso-${{ github.sha }}
-        path: build/aOS.iso
-        retention-days: 30
 
   validate-code:
     name: Code Validation
