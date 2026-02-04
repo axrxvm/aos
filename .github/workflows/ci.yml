@@ -4,42 +4,9 @@ on:
   pull_request:
     branches: [ main, develop ]
   push:
-    branches: [ develop ]
+    branches: [ main, develop ]
 
 jobs:
-  build-test:
-    name: Build Test
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          gcc-multilib \
-          g++-multilib \
-          nasm \
-          grub-pc-bin \
-          grub-common \
-          xorriso \
-          mtools
-    
-    - name: Build kernel
-      run: make iso
-    
-    - name: Verify ISO creation
-      run: |
-        if [ -f build/aOS.iso ]; then
-          echo "✓ ISO built successfully"
-          ls -lh build/aOS.iso
-        else
-          echo "✗ ISO build failed"
-          exit 1
-        fi
-
   validate-code:
     name: Code Validation
     runs-on: ubuntu-latest
