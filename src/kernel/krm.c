@@ -327,6 +327,190 @@ static void krm_kb_wait_key_release(uint8_t press_scancode) {
 }
 
 
+// Panic Explanation System
+
+
+static void krm_add_suggestion(const char* suggestion) {
+    if (krm_panic_data.suggestion_count >= KRM_MAX_SUGGESTIONS) return;
+    krm_strcpy(krm_panic_data.suggestions[krm_panic_data.suggestion_count],
+               suggestion, KRM_MAX_SUGGESTION_LEN);
+    krm_panic_data.suggestion_count++;
+}
+
+static void krm_analyze_panic(void) {
+    krm_panic_data.suggestion_count = 0;
+    
+    // Clear explanation buffer
+    krm_memset(krm_panic_data.explanation, 0, KRM_MAX_EXPLANATION_LEN);
+    
+    // Analyze based on register state and message
+    if (krm_panic_data.has_registers) {
+        uint32_t int_no = krm_panic_data.registers.int_no;
+        uint32_t err_code = krm_panic_data.registers.err_code;
+        uint32_t eip = krm_panic_data.registers.eip;
+        uint32_t cr2 = 0; // Page fault address (would need to be captured)
+        
+        switch (int_no) {
+            case 0: // Divide by Zero
+                krm_strcpy(krm_panic_data.explanation,
+                    "Division by Zero Error: The CPU attempted to divide a number by zero, which is mathematically undefined. This typically occurs when a variable used as a divisor was unexpectedly zero.",
+                    KRM_MAX_EXPLANATION_LEN);
+                krm_add_suggestion("Check division operations near the fault address");
+                krm_add_suggestion("Verify loop counters and array indices");
+                krm_add_suggestion("Add validation before division operations");
+                break;
+                
+            case 6: // Invalid Opcode
+                krm_strcpy(krm_panic_data.explanation,
+                    "Invalid Opcode: The CPU encountered an instruction it doesn't recognize. This usually means the instruction pointer is pointing to invalid code, often due to memory corruption, jumping to data instead of code, or stack overflow.",
+                    KRM_MAX_EXPLANATION_LEN);
+                krm_add_suggestion("Check for buffer overflows corrupting code");
+                krm_add_suggestion("Verify function pointers are not corrupted");
+                krm_add_suggestion("Inspect stack for overflow conditions");
+                break;
+                
+            case 8: // Double Fault
+                krm_strcpy(krm_panic_data.explanation,
+                    "Double Fault: An exception occurred while trying to handle a previous exception. This is a critical error indicating severe system instability, often caused by stack problems or corrupted exception handlers.",
+                    KRM_MAX_EXPLANATION_LEN);
+                krm_add_suggestion("Check kernel stack size and overflow");
+                krm_add_suggestion("Verify IDT and exception handler integrity");
+                krm_add_suggestion("Inspect TSS and stack segment setup");
+                break;
+                
+            case 13: // General Protection Fault
+                krm_strcpy(krm_panic_data.explanation,
+                    "General Protection Fault: The CPU detected a privilege violation or illegal memory access. This can occur from null pointer dereferences, accessing invalid segments, or violating memory protection rules.",
+                    KRM_MAX_EXPLANATION_LEN);
+                
+                if (err_code != 0) {
+                    if (err_code & 0x1) {
+                        krm_add_suggestion("External event caused fault (check hardware)");
+                    }
+                    if (err_code & 0x2) {
+                        krm_add_suggestion("Fault in IDT - check interrupt handlers");
+                    } else if (err_code & 0x4) {
+                        krm_add_suggestion("Fault in LDT - check local descriptors");
+                    } else {
+                        krm_add_suggestion("Fault in GDT - check segment selectors");
+                    }
+                } else {
+                    krm_add_suggestion("Check for null pointer dereferences");
+                    krm_add_suggestion("Verify segment selectors are valid");
+                }
+                krm_add_suggestion("Inspect memory access at fault address");
+                break;
+                
+            case 14: // Page Fault
+                krm_strcpy(krm_panic_data.explanation,
+                    "Page Fault: Attempted to access memory that is not mapped or violates page permissions. The error code indicates the type of access that failed.",
+                    KRM_MAX_EXPLANATION_LEN);
+                
+                if (err_code & 0x1) {
+                    krm_add_suggestion("Page protection violation - access denied");
+                } else {
+                    krm_add_suggestion("Page not present - unmapped memory access");
+                }
+                
+                if (err_code & 0x2) {
+                    krm_add_suggestion("Write access failed - check write permissions");
+                } else {
+                    krm_add_suggestion("Read access failed - check page mapping");
+                }
+                
+                if (err_code & 0x4) {
+                    krm_add_suggestion("User-mode access - check privilege levels");
+                } else {
+                    krm_add_suggestion("Kernel-mode access - check kernel pointers");
+                }
+                break;
+                
+            default:
+                if (int_no < 32) {
+                    krm_strcpy(krm_panic_data.explanation,
+                        "CPU Exception: A hardware exception was triggered by the processor. This indicates a serious error in kernel execution that violated CPU protection mechanisms.",
+                        KRM_MAX_EXPLANATION_LEN);
+                    krm_add_suggestion("Check kernel code near fault address");
+                    krm_add_suggestion("Verify memory and stack integrity");
+                    krm_add_suggestion("Review recent kernel changes");
+                } else {
+                    krm_strcpy(krm_panic_data.explanation,
+                        "Interrupt Handler Panic: An interrupt handler encountered a critical error and triggered a kernel panic to prevent system corruption.",
+                        KRM_MAX_EXPLANATION_LEN);
+                    krm_add_suggestion("Check interrupt handler code");
+                    krm_add_suggestion("Verify device driver stability");
+                    krm_add_suggestion("Inspect hardware interrupt behavior");
+                }
+                break;
+        }
+    } else {
+        // Software panic - analyze message
+        const char* msg = krm_panic_data.message;
+        
+        // Check for common panic messages
+        if (msg[0] == 'A' && msg[1] == 's' && msg[2] == 's') { // "Assertion"
+            krm_strcpy(krm_panic_data.explanation,
+                "The system found something unexpected and stopped to prevent damage. The kernel has built-in safety checks, and one of them failed - meaning the system was in a state it shouldn't be in.",
+                KRM_MAX_EXPLANATION_LEN);
+            krm_add_suggestion("This is a safety check that caught a problem");
+            krm_add_suggestion("Look at what the check was testing");
+            krm_add_suggestion("There's likely a bug in the kernel code");
+        }
+        else if ((msg[0] == 'O' && msg[1] == 'u' && msg[2] == 't') || // "Out of"
+                 (msg[0] == 'o' && msg[1] == 'u' && msg[2] == 't')) {
+            krm_strcpy(krm_panic_data.explanation,
+                "The system ran out of something it needs to operate (probably memory). Like running out of paper when printing, the system couldn't get the resources it needed to continue working.",
+                KRM_MAX_EXPLANATION_LEN);
+            krm_add_suggestion("Too many things were running at once");
+            krm_add_suggestion("A program might be using too much memory");
+            krm_add_suggestion("The system might need more memory allocated");
+        }
+        else if (msg[0] == 'V' && msg[1] == 'F' && msg[2] == 'S') { // "VFS"
+            krm_strcpy(krm_panic_data.explanation,
+                "There was a serious problem with the file system. The system couldn't read or write files properly, which could mean the disk is corrupted or a file operation went wrong.",
+                KRM_MAX_EXPLANATION_LEN);
+            krm_add_suggestion("The disk might be corrupted or full");
+            krm_add_suggestion("A file operation failed unexpectedly");
+            krm_add_suggestion("Try checking the filesystem for errors");
+        }
+        else if (msg[0] == 'N' || msg[0] == 'n') { // Could be "Network" or "NULL"
+            if (msg[1] == 'e' || msg[1] == 'E') { // "Network"
+                krm_strcpy(krm_panic_data.explanation,
+                    "The network system encountered a fatal error. This could be a problem with the network hardware, driver, or the network software itself crashed.",
+                    KRM_MAX_EXPLANATION_LEN);
+                krm_add_suggestion("Network hardware might be malfunctioning");
+                krm_add_suggestion("Network driver may have a bug");
+                krm_add_suggestion("Try without network devices attached");
+            } else { // Likely "NULL"
+                krm_strcpy(krm_panic_data.explanation,
+                    "The system tried to use something that doesn't exist yet or was never set up. It's like trying to use a tool that's not in your toolbox - the program expected something to be there, but it wasn't.",
+                    KRM_MAX_EXPLANATION_LEN);
+                krm_add_suggestion("Something wasn't initialized properly");
+                krm_add_suggestion("A program tried to use data that doesn't exist");
+                krm_add_suggestion("Check if things are started in the right order");
+            }
+        }
+        else {
+            // Generic software panic
+            krm_strcpy(krm_panic_data.explanation,
+                "The kernel detected a problem that made it unsafe to continue running. The system stopped itself on purpose to prevent data corruption or other damage. This is better than continuing with unknown problems.",
+                KRM_MAX_EXPLANATION_LEN);
+            krm_add_suggestion("Read the panic message for specific clues");
+            krm_add_suggestion("Check what was happening before the crash");
+            krm_add_suggestion("This might be a bug that needs fixing");
+        }
+    }
+    
+    // Add universal suggestion to report the issue
+    krm_add_suggestion("Report this at https://github.com/axrxvm/aos/issues");
+    
+    krm_serial_write_string("[KRM] Panic analysis complete\n");
+    krm_serial_write_string("[KRM] Explanation: ");
+    krm_serial_write_string(krm_panic_data.explanation);
+    krm_serial_write_string("\n");
+}
+
+
 // Backtrace Collection (Called before entering KRM UI)
 
 
@@ -445,6 +629,71 @@ static void krm_draw_footer(void) {
     krm_vga_fill_line(KRM_VGA_HEIGHT - 1, KRM_COLOR_INFO, ' ');
     krm_vga_write_string_at("Use UP/DOWN arrows to navigate, ENTER to select, ESC to return", 
                            KRM_COLOR_INFO, 2, KRM_VGA_HEIGHT - 1);
+}
+
+static void krm_screen_explanation(void) {
+    krm_vga_clear(KRM_COLOR_NORMAL);
+    krm_draw_header("=== WHAT HAPPENED? ===");
+    
+    uint32_t y = 2;
+    
+    // Title
+    krm_vga_write_string_at("Panic Analysis", KRM_COLOR_INFO, 2, y);
+    y += 2;
+    
+    // Explanation (word wrap for long text)
+    krm_vga_write_string_at("Explanation:", KRM_COLOR_INFO, 2, y++);
+    
+    const char* explanation = krm_panic_data.explanation;
+    uint32_t line_start = 0;
+    uint32_t char_count = 0;
+    uint32_t max_line_width = KRM_VGA_WIDTH - 6;
+    
+    while (explanation[char_count] && y < KRM_VGA_HEIGHT - 6) {
+        // Find word boundaries for wrapping
+        uint32_t line_len = 0;
+        uint32_t last_space = 0;
+        
+        while (explanation[char_count] && line_len < max_line_width) {
+            if (explanation[char_count] == ' ') {
+                last_space = line_len;
+            }
+            char_count++;
+            line_len++;
+        }
+        
+        // If we hit max width mid-word, backtrack to last space
+        if (explanation[char_count] && last_space > 0) {
+            char_count = line_start + last_space + 1;
+            line_len = last_space;
+        }
+        
+        // Print line
+        for (uint32_t i = 0; i < line_len && explanation[line_start + i]; i++) {
+            if (explanation[line_start + i] != ' ' || i > 0) {
+                krm_vga_putchar_at(explanation[line_start + i], KRM_COLOR_NORMAL, 4 + i, y);
+            }
+        }
+        
+        y++;
+        line_start = char_count;
+    }
+    
+    y++;
+    
+    // Suggestions
+    if (krm_panic_data.suggestion_count > 0) {
+        krm_vga_write_string_at("What might help:", KRM_COLOR_INFO, 2, y++);
+        y++;
+        
+        for (uint32_t i = 0; i < krm_panic_data.suggestion_count && y < KRM_VGA_HEIGHT - 1; i++) {
+            krm_vga_write_string_at("* ", KRM_COLOR_INFO, 4, y);
+            krm_vga_write_string_at(krm_panic_data.suggestions[i], KRM_COLOR_NORMAL, 6, y);
+            y++;
+        }
+    }
+    
+    krm_draw_footer();
 }
 
 static void krm_screen_panic_details(void) {
@@ -604,6 +853,7 @@ static void krm_screen_menu(void) {
     
     // Menu options
     const char* menu_items[] = {
+        "What Happened?",
         "View Panic Details",
         "View Stack Backtrace",
         "View Register Dump",
@@ -677,6 +927,9 @@ static void krm_main_loop(void) {
         // Draw current screen
         if (in_submenu) {
             switch (krm_current_menu) {
+                case KRM_MENU_VIEW_EXPLANATION:
+                    krm_screen_explanation();
+                    break;
                 case KRM_MENU_VIEW_DETAILS:
                     krm_screen_panic_details();
                     break;
@@ -726,6 +979,7 @@ static void krm_main_loop(void) {
                     
                 case KRM_KEY_ENTER:
                     switch (krm_current_menu) {
+                        case KRM_MENU_VIEW_EXPLANATION:
                         case KRM_MENU_VIEW_DETAILS:
                         case KRM_MENU_VIEW_BACKTRACE:
                         case KRM_MENU_VIEW_REGISTERS:
@@ -861,8 +1115,12 @@ void krm_enter(registers_t *regs, const char *message, const char *file, uint32_
     krm_serial_write_string(count_buf);
     krm_serial_write_string(" stack frames\n");
     
-    // Reset menu to default
-    krm_current_menu = KRM_MENU_VIEW_DETAILS;
+    // Analyze panic and generate intelligent explanation
+    krm_serial_write_string("[KRM] Analyzing panic...\n");
+    krm_analyze_panic();
+    
+    // Reset menu to default (explanation screen)
+    krm_current_menu = KRM_MENU_VIEW_EXPLANATION;
     
     krm_serial_write_string("[KRM] Starting user interface...\n");
     

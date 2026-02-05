@@ -20,6 +20,9 @@
 #define KRM_MAX_MESSAGE_LEN 256
 #define KRM_MAX_FILE_LEN 128
 #define KRM_MAX_BACKTRACE_FRAMES 16
+#define KRM_MAX_EXPLANATION_LEN 512
+#define KRM_MAX_SUGGESTIONS 4
+#define KRM_MAX_SUGGESTION_LEN 128
 
 // Panic information structure
 typedef struct {
@@ -31,16 +34,20 @@ typedef struct {
     uint32_t backtrace[KRM_MAX_BACKTRACE_FRAMES];  // EIP addresses in stack trace
     uint32_t backtrace_count;  // Number of valid backtrace entries
     uint32_t panic_time;  // Time of panic (in ticks, if available)
+    char explanation[KRM_MAX_EXPLANATION_LEN];  // User-friendly explanation
+    char suggestions[KRM_MAX_SUGGESTIONS][KRM_MAX_SUGGESTION_LEN];  // Suggested actions
+    uint32_t suggestion_count;  // Number of suggestions
 } krm_panic_info_t;
 
 // KRM Menu Options
 typedef enum {
-    KRM_MENU_VIEW_DETAILS = 0,
-    KRM_MENU_VIEW_BACKTRACE = 1,
-    KRM_MENU_VIEW_REGISTERS = 2,
-    KRM_MENU_REBOOT = 3,
-    KRM_MENU_HALT = 4,
-    KRM_MENU_COUNT = 5
+    KRM_MENU_VIEW_EXPLANATION = 0,
+    KRM_MENU_VIEW_DETAILS = 1,
+    KRM_MENU_VIEW_BACKTRACE = 2,
+    KRM_MENU_VIEW_REGISTERS = 3,
+    KRM_MENU_REBOOT = 4,
+    KRM_MENU_HALT = 5,
+    KRM_MENU_COUNT = 6
 } krm_menu_option_t;
 
 // Enter Kernel Recovery Mode with panic information
