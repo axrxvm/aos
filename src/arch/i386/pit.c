@@ -16,8 +16,8 @@
 // Forward declaration for scheduler_tick (from process manager)
 extern void scheduler_tick(void);
 
-// Forward declaration for e1000 polling
-extern void e1000_handle_interrupt(void);
+// Forward declaration for network polling
+extern void net_poll(void);
 
 // Global tick counter, incremented by the PIT handler.
 volatile uint32_t system_ticks = 0;
@@ -69,9 +69,9 @@ void pit_handler(registers_t *regs) {
     // Call scheduler tick for process scheduling
     scheduler_tick();
     
-    // Poll e1000 for received packets every 10 ticks (~100ms at 100Hz)
+    // Poll network for received packets every 10 ticks (~100ms at 100Hz)
     if (system_ticks % 10 == 0) {
-        e1000_handle_interrupt();
+        net_poll();
     }
 
     // Optional: Debugging message every N ticks (e.g., every second if PIT is 100Hz).

@@ -13,7 +13,6 @@
 #include <net/ipv4.h>
 #include <net/arp.h>
 #include <net/net.h>
-#include <dev/e1000.h>
 #include <string.h>
 #include <serial.h>
 #include <stdlib.h>
@@ -218,7 +217,7 @@ int dhcp_discover(net_interface_t* iface) {
     uint32_t timeout = get_tick_count() + 500;  // 5 seconds
     
     while (get_tick_count() < timeout && !dhcp_configured) {
-        e1000_handle_interrupt();  // Poll for packets
+        net_poll();  // Poll for packets on all network interfaces
         
         int recv_len = udp_socket_recvfrom(sock, recv_buffer, sizeof(recv_buffer), &src_ip, &src_port);
         if (recv_len > 0) {
@@ -256,7 +255,7 @@ int dhcp_discover(net_interface_t* iface) {
     // Wait for ACK
     timeout = get_tick_count() + 500;
     while (get_tick_count() < timeout && !dhcp_configured) {
-        e1000_handle_interrupt();
+        net_poll();
         
         int recv_len = udp_socket_recvfrom(sock, recv_buffer, sizeof(recv_buffer), &src_ip, &src_port);
         if (recv_len > 0) {

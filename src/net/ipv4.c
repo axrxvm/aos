@@ -333,8 +333,7 @@ int ipv4_resolve_arp(net_interface_t* iface, uint32_t ip, mac_addr_t* mac,
         __asm__ volatile("hlt");
         
         // Poll network for incoming packets
-        extern void e1000_handle_interrupt(void);
-        e1000_handle_interrupt();
+        net_poll();
         
         // Check if resolved
         if (arp_cache_lookup(ip, mac) == 0) {

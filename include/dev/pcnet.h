@@ -170,22 +170,23 @@
 #define PCNET_MODE_DRCVBC       (1 << 14)  // Disable Receive Broadcast
 #define PCNET_MODE_DRCVPA       (1 << 13)  // Disable Receive Physical Address
 
-// 32-bit Receive Descriptor (PCnet-PCI style)
+// 32-bit Receive Descriptor (PCnet-PCI SWSTYLE 2)
+// Format: RBADR | STATUS:BCNT | MCNT | RESERVED
+// STATUS:BCNT = (FLAGS[15:0] << 16) | (0xF << 12) | BCNT[11:0]
+// OWN bit is bit 31 of status_bcnt field
 typedef struct {
-    uint32_t rbadr;      // Buffer Address
-    int16_t  bcnt;       // Buffer Byte Count (two's complement)
-    int16_t  mcnt;       // Message Byte Count
-    uint32_t flags;      // Flags (includes OWN, ERR, etc.)
-    uint32_t reserved;   // Reserved
+    uint32_t rbadr;       // Offset 0: Buffer Address
+    uint32_t status_bcnt; // Offset 4: [31:16]=Status flags (OWN at 31), [15:12]=0xF, [11:0]=BCNT
+    uint32_t mcnt_flags;  // Offset 8: [11:0]=Message count, upper bits=misc flags
+    uint32_t reserved;    // Offset 12: Reserved/User
 } __attribute__((packed)) pcnet_rx_desc_t;
 
-// 32-bit Transmit Descriptor (PCnet-PCI style)
+// 32-bit Transmit Descriptor (PCnet-PCI SWSTYLE 2)
 typedef struct {
-    uint32_t tbadr;      // Buffer Address
-    int16_t  bcnt;       // Buffer Byte Count (two's complement)
-    uint16_t status;     // Status flags
-    uint32_t flags;      // Flags (includes OWN, ERR, etc.)
-    uint32_t reserved;   // Reserved
+    uint32_t tbadr;       // Offset 0: Buffer Address
+    uint32_t status_bcnt; // Offset 4: [31:16]=Status flags (OWN at 31), [15:12]=0xF, [11:0]=BCNT
+    uint32_t misc;        // Offset 8: TRC and misc
+    uint32_t reserved;    // Offset 12: Reserved/User
 } __attribute__((packed)) pcnet_tx_desc_t;
 
 // 32-bit Initialization Block (Software Style 2)

@@ -41,9 +41,6 @@ static uint16_t dns_transaction_id = 1;
 // Forward declarations
 
 
-extern void e1000_handle_interrupt(void);
-
-
 // Utilities
 
 
@@ -53,7 +50,7 @@ static uint16_t dns_generate_id(void) {
 
 // Network polling function
 static void dns_poll_network(void) {
-    e1000_handle_interrupt();
+    net_poll();  // Poll all network interfaces (e1000, pcnet, etc.)
     ipv4_process_pending();
 }
 

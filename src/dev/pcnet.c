@@ -110,16 +110,15 @@ static void pcnet_reset(void) {
 // MAC Address Functions
 
 static void pcnet_read_mac_address(mac_addr_t* mac) {
-    // MAC address is stored in the APROM (first 6 bytes of I/O space)
-    uint32_t mac_low = inl(io_base + PCNET_IO_APROM0);
-    uint16_t mac_high = inw(io_base + PCNET_IO_APROM4);
-    
-    mac->addr[0] = (mac_low >> 0) & 0xFF;
-    mac->addr[1] = (mac_low >> 8) & 0xFF;
-    mac->addr[2] = (mac_low >> 16) & 0xFF;
-    mac->addr[3] = (mac_low >> 24) & 0xFF;
-    mac->addr[4] = (mac_high >> 0) & 0xFF;
-    mac->addr[5] = (mac_high >> 8) & 0xFF;
+    // MAC address is stored in the APROM (Address PROM)
+    // MUST use byte-wide reads at offsets 0x00-0x05
+    // The APROM is accessible after a reset in 16-bit I/O mode
+    mac->addr[0] = inb(io_base + 0x00);
+    mac->addr[1] = inb(io_base + 0x01);
+    mac->addr[2] = inb(io_base + 0x02);
+    mac->addr[3] = inb(io_base + 0x03);
+    mac->addr[4] = inb(io_base + 0x04);
+    mac->addr[5] = inb(io_base + 0x05);
 }
 
 // Descriptor Ring Initialization
@@ -147,9 +146,10 @@ static void pcnet_init_rx_ring(void) {
         rx_buffers[i] = (uint8_t*)(((uintptr_t)raw_buf + 15) & ~15);
         
         rx_descs[i].rbadr = (uint32_t)(uintptr_t)rx_buffers[i];
-        rx_descs[i].bcnt = (int16_t)(-(int16_t)PCNET_RX_BUFFER_SIZE);  // Two's complement
-        rx_descs[i].mcnt = 0;
-        rx_descs[i].flags = PCNET_DESC_OWN;  // Give to chip
+        // status_bcnt format: [31]=OWN, [30:16]=status, [15:12]=0xF (ones), [11:0]=BCNT (two's complement)
+        uint16_t bcnt = (uint16_t)((-PCNET_RX_BUFFER_SIZE) & 0x0FFF) | 0xF000;  // BCNT with ONES bits
+        rx_descs[i].status_bcnt = PCNET_DESC_OWN | bcnt;  // OWN=1, give to chip
+        rx_descs[i].mcnt_flags = 0;
         rx_descs[i].reserved = 0;
     }
     
@@ -169,9 +169,8 @@ static void pcnet_init_tx_ring(void) {
         tx_buffers[i] = (uint8_t*)(((uintptr_t)raw_buf + 15) & ~15);
         
         tx_descs[i].tbadr = (uint32_t)(uintptr_t)tx_buffers[i];
-        tx_descs[i].bcnt = 0;
-        tx_descs[i].status = 0;
-        tx_descs[i].flags = 0;  // We own it (OWN bit = 0)
+        tx_descs[i].status_bcnt = 0xF000;  // ONES bits set, OWN=0 (we own it)
+        tx_descs[i].misc = 0;
         tx_descs[i].reserved = 0;
     }
     
@@ -219,7 +218,7 @@ int pcnet_transmit(const uint8_t* data, uint32_t len) {
     
     // Wait for descriptor to be available (not owned by chip)
     int timeout = 100000;
-    while ((desc->flags & PCNET_DESC_OWN) && timeout-- > 0) {
+    while ((desc->status_bcnt & PCNET_DESC_OWN) && timeout-- > 0) {
         __asm__ __volatile__("pause" ::: "memory");
     }
     
@@ -231,13 +230,12 @@ int pcnet_transmit(const uint8_t* data, uint32_t len) {
     // Copy data to buffer
     memcpy(tx_buffers[desc_idx], data, len);
     
-    // Setup descriptor
-    desc->bcnt = (int16_t)(-(int16_t)len);  // Two's complement of length
-    desc->status = 0;
-    
-    // Set flags: OWN (give to chip), STP (start of packet), ENP (end of packet)
-    // Add FCS flag to auto-append CRC
-    desc->flags = PCNET_DESC_OWN | PCNET_DESC_STP | PCNET_DESC_ENP | PCNET_TXDESC_ADD_FCS;
+    // Setup descriptor: status_bcnt format
+    // [31]=OWN, [30:16]=flags (STP, ENP, ADD_FCS), [15:12]=0xF, [11:0]=BCNT
+    uint16_t bcnt = (uint16_t)((-len) & 0x0FFF) | 0xF000;  // BCNT with ONES bits
+    // Set OWN, STP, ENP flags in upper 16 bits
+    desc->status_bcnt = PCNET_DESC_OWN | PCNET_DESC_STP | PCNET_DESC_ENP | PCNET_TXDESC_ADD_FCS | bcnt;
+    desc->misc = 0;
     
     // Memory barrier
     __asm__ __volatile__("mfence" ::: "memory");
@@ -248,7 +246,7 @@ int pcnet_transmit(const uint8_t* data, uint32_t len) {
     
     // Wait for transmission to complete
     timeout = 100000;
-    while ((desc->flags & PCNET_DESC_OWN) && timeout-- > 0) {
+    while ((desc->status_bcnt & PCNET_DESC_OWN) && timeout-- > 0) {
         __asm__ __volatile__("pause" ::: "memory");
     }
     
@@ -257,10 +255,20 @@ int pcnet_transmit(const uint8_t* data, uint32_t len) {
     tx_packets++;
     
     // Check for errors
-    if (desc->flags & PCNET_DESC_ERR) {
-        serial_puts("pcnet: TX error\n");
+    if (desc->status_bcnt & PCNET_DESC_ERR) {
+        serial_puts("pcnet: TX error, status=0x");
+        char hex[16];
+        itoa(desc->status_bcnt, hex, 16);
+        serial_puts(hex);
+        serial_puts("\n");
         return -1;
     }
+    
+    serial_puts("pcnet: TX OK len=");
+    char len_str[16];
+    itoa(len, len_str, 10);
+    serial_puts(len_str);
+    serial_puts("\n");
     
     return 0;
 }
@@ -268,18 +276,18 @@ int pcnet_transmit(const uint8_t* data, uint32_t len) {
 // Packet Reception
 
 static void pcnet_receive(void) {
-    while (!(rx_descs[rx_head].flags & PCNET_DESC_OWN)) {
+    while (!(rx_descs[rx_head].status_bcnt & PCNET_DESC_OWN)) {
         pcnet_rx_desc_t* desc = &rx_descs[rx_head];
         
         // Memory barrier
         __asm__ __volatile__("lfence" ::: "memory");
         
-        // Check for errors
-        if (desc->flags & PCNET_DESC_ERR) {
+        // Check for errors (ERR bit is bit 30)
+        if (desc->status_bcnt & PCNET_DESC_ERR) {
             serial_puts("pcnet: RX error\n");
         } else {
-            // Get message length
-            uint16_t length = desc->mcnt & 0x0FFF;
+            // Get message length from mcnt_flags (lower 12 bits)
+            uint16_t length = desc->mcnt_flags & 0x0FFF;
             
             if (length > 0 && length <= PCNET_RX_BUFFER_SIZE && pcnet_iface) {
                 rx_packets++;
@@ -301,9 +309,9 @@ static void pcnet_receive(void) {
         }
         
         // Reset descriptor for reuse
-        desc->bcnt = (int16_t)(-(int16_t)PCNET_RX_BUFFER_SIZE);
-        desc->mcnt = 0;
-        desc->flags = PCNET_DESC_OWN;  // Give back to chip
+        uint16_t bcnt = (uint16_t)((-PCNET_RX_BUFFER_SIZE) & 0x0FFF) | 0xF000;
+        desc->status_bcnt = PCNET_DESC_OWN | bcnt;  // Give back to chip
+        desc->mcnt_flags = 0;
         
         // Advance head
         rx_head = (rx_head + 1) % PCNET_NUM_RX_DESC;
@@ -313,8 +321,32 @@ static void pcnet_receive(void) {
 void pcnet_handle_interrupt(void) {
     if (!io_base) return;
     
+    static uint32_t poll_count = 0;
+    poll_count++;
+    
+    // Debug every 50000 polls to reduce spam
+    if (poll_count % 50000 == 0) {
+        serial_puts("pcnet: poll #");
+        char count_str[16];
+        itoa(poll_count / 1000, count_str, 10);
+        serial_puts(count_str);
+        serial_puts("k, desc[0]=0x");
+        itoa(rx_descs[0].status_bcnt, count_str, 16);
+        serial_puts(count_str);
+        serial_puts("\n");
+    }
+    
     // Read and clear interrupt status
     uint16_t csr0 = pcnet_read_csr16(PCNET_CSR0);
+    
+    // Debug: Check if anything interesting is happening
+    if (csr0 & (PCNET_CSR0_RINT | PCNET_CSR0_TINT | PCNET_CSR0_ERR)) {
+        serial_puts("pcnet: CSR0=0x");
+        char hex[8];
+        itoa(csr0, hex, 16);
+        serial_puts(hex);
+        serial_puts("\n");
+    }
     
     // Clear interrupt flags by writing 1s to them
     pcnet_write_csr16(PCNET_CSR0, csr0 & 
@@ -434,6 +466,29 @@ int pcnet_init(void) {
     // Setup initialization block
     pcnet_init_block_setup();
     
+    // Debug: Show init block details
+    serial_puts("pcnet: Init block at 0x");
+    char addr_hex[16];
+    itoa((uint32_t)(uintptr_t)init_block, addr_hex, 16);
+    serial_puts(addr_hex);
+    serial_puts(", mode=0x");
+    itoa(init_block->mode, addr_hex, 16);
+    serial_puts(addr_hex);
+    serial_puts(", rlen=0x");
+    itoa(init_block->rlen, addr_hex, 16);
+    serial_puts(addr_hex);
+    serial_puts(", tlen=0x");
+    itoa(init_block->tlen, addr_hex, 16);
+    serial_puts(addr_hex);
+    serial_puts("\n");
+    serial_puts("pcnet: RX ring at 0x");
+    itoa(init_block->rdra, addr_hex, 16);
+    serial_puts(addr_hex);
+    serial_puts(", TX ring at 0x");
+    itoa(init_block->tdra, addr_hex, 16);
+    serial_puts(addr_hex);
+    serial_puts("\n");
+    
     // Write init block address to CSR1 (low) and CSR2 (high)
     uint32_t init_addr = (uint32_t)(uintptr_t)init_block;
     pcnet_write_csr16(PCNET_CSR1, (uint16_t)(init_addr & 0xFFFF));
@@ -453,11 +508,22 @@ int pcnet_init(void) {
         return -1;
     }
     
-    // Clear IDON by writing 1 to it
-    pcnet_write_csr16(PCNET_CSR0, PCNET_CSR0_IDON);
+    // PCnet initialization sequence per AMD datasheet:
+    // 1. After IDON is set, chip is still in INIT state
+    // 2. Write STOP to exit initialization mode
+    // 3. Then write STRT to begin operation
     
-    // Enable interrupts and start the chip
-    pcnet_write_csr16(PCNET_CSR0, PCNET_CSR0_IENA | PCNET_CSR0_STRT);
+    // Step 1: Stop initialization mode (clears INIT)
+    pcnet_write_csr16(PCNET_CSR0, PCNET_CSR0_STOP);
+    
+    // Small delay for chip to transition
+    for (volatile int i = 0; i < 1000; i++);
+    
+    // Step 2: Start the chip (begins TX/RX operation)
+    pcnet_write_csr16(PCNET_CSR0, PCNET_CSR0_STRT);
+    
+    // Delay for chip to fully enter run mode
+    for (volatile int i = 0; i < 10000; i++);
     
     // Verify running
     uint16_t csr0 = pcnet_read_csr16(PCNET_CSR0);
@@ -465,6 +531,12 @@ int pcnet_init(void) {
         serial_puts("pcnet: Failed to start TX/RX\n");
         return -1;
     }
+    
+    serial_puts("pcnet: CSR0 after start: 0x");
+    char csr_hex[8];
+    itoa(csr0, csr_hex, 16);
+    serial_puts(csr_hex);
+    serial_puts("\n");
     
     // Configure interface
     pcnet_iface->flags = IFF_BROADCAST;
