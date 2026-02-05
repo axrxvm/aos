@@ -372,11 +372,33 @@ int user_save_database(const char* path) {
         return -1;
     }
     
+    // Temporarily elevate to system privileges to bypass permission checks
+    process_t* proc = process_get_current();
+    owner_type_t old_type = OWNER_USR;
+    uint32_t old_id = 0;
+    
+    if (proc) {
+        old_type = proc->owner_type;
+        old_id = proc->owner_id;
+        proc->owner_type = OWNER_SYSTEM;
+        proc->owner_id = 0;
+    }
+    
     int fd = vfs_open(path, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
+        // Restore original privileges
+        if (proc) {
+            proc->owner_type = old_type;
+            proc->owner_id = old_id;
+        }
+        
         serial_puts("User: Failed to open '");
         serial_puts(path);
-        serial_puts("' for writing\n");
+        serial_puts("' for writing (error code: ");
+        char buf[16];
+        itoa(fd, buf, 10);
+        serial_puts(buf);
+        serial_puts(")\n");
         return -2;
     }
     
@@ -389,6 +411,12 @@ int user_save_database(const char* path) {
     }
     
     vfs_close(fd);
+    
+    // Restore original privileges
+    if (proc) {
+        proc->owner_type = old_type;
+        proc->owner_id = old_id;
+    }
     
     serial_puts("User: Saved database to '");
     serial_puts(path);
