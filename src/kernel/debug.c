@@ -3,12 +3,13 @@
  * ./src/kernel/debug.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.8.8
  * === AOS HEADER END ===
  */
 
 
 #include <debug.h>
+#include <krm.h>
 #include <vga.h>
 #include <serial.h>
 #include <stdlib.h> // For itoa
@@ -69,94 +70,96 @@ void print_backtrace(uint32_t max_frames) {
 }
 
 void panic_screen(registers_t *regs, const char *message, const char *file, uint32_t line) {
+    // CRITICAL: Prevent cascading panics
+    // Use a simple static guard that doesn't depend on any other system
+    static volatile uint8_t panic_guard = 0;
+    
     asm volatile ("cli"); // Disable interrupts
+    
+    // Check if we're already in a panic
+    if (panic_guard) {
+        // Double panic! Go directly to minimal halt without trying anything fancy
+        // Direct VGA write - no function calls
+        uint16_t* vga = (uint16_t*)0xB8000;
+        const char* msg = "!!! DOUBLE PANIC - HALT !!!";
+        for (int i = 0; i < 80 * 25; i++) {
+            vga[i] = ' ' | (0xCF << 8); // White on red
+        }
+        for (int i = 0; msg[i]; i++) {
+            vga[12 * 80 + 26 + i] = msg[i] | (0xCF << 8);
+        }
+        while(1) asm volatile("hlt");
+    }
+    
+    panic_guard = 1; // Set guard before doing anything else
 
-    // Assuming vga_set_color, vga_clear, vga_puts are always available if linked.
-    vga_set_color(VGA_COLOR_WHITE_ON_RED);
-    vga_clear();
-    vga_puts("!!! KERNEL PANIC !!!\n\n");
-
-    // Assuming serial_puts is always available.
-    serial_puts("!!! KERNEL PANIC !!!\n\n");
-
-    vga_puts("Message: "); vga_puts(message ? message : "(null)"); vga_puts("\n");
+    // Send panic info to serial for debugging (before entering KRM)
+    serial_puts("\n!!! KERNEL PANIC !!!\n");
     serial_puts("Message: "); serial_puts(message ? message : "(null)"); serial_puts("\n");
-
-    char num_buf[12];  // Buffer for itoa line number
-    // Assuming itoa is always available if linked.
-    // And file is expected to be a valid string literal from __FILE__.
+    serial_puts("Location: "); serial_puts(file); serial_puts(":");
+    char num_buf[12];
     itoa(line, num_buf, 10);
-    vga_puts("Location: "); vga_puts(file); vga_puts(":"); vga_puts(num_buf); vga_puts("\n\n");
-    serial_puts("Location: "); serial_puts(file); serial_puts(":"); serial_puts(num_buf); serial_puts("\n\n");
+    serial_puts(num_buf); serial_puts("\n");
 
-
-    if (regs) { // itoa, serial_puts, vga_puts are assumed to be available.
-        char reg_buf[12]; // For itoa register values
-
-        // Define separate macros for VGA and Serial output to simplify logic
-        #define PRINT_REG_VGA(reg_name_str, reg_val_local, buf_local) \
-            vga_puts(reg_name_str); itoa(reg_val_local, buf_local, 10); vga_puts(buf_local); vga_puts("  ");
-
+    if (regs) {
+        char reg_buf[12];
+        serial_puts("\nRegisters:\n");
+        
         #define PRINT_REG_SERIAL(reg_name_str, reg_val_local, buf_local) \
             serial_puts(reg_name_str); itoa(reg_val_local, buf_local, 10); serial_puts(buf_local); serial_puts("  ");
 
-        vga_puts("Registers:\n");
-        serial_puts("Registers:\n");
+        PRINT_REG_SERIAL("EAX: 0x", regs->eax, reg_buf);
+        PRINT_REG_SERIAL("EBX: 0x", regs->ebx, reg_buf);
+        PRINT_REG_SERIAL("ECX: 0x", regs->ecx, reg_buf);
+        PRINT_REG_SERIAL("EDX: 0x", regs->edx, reg_buf);
+        serial_puts("\n");
 
-        PRINT_REG_VGA("EAX: 0x", regs->eax, reg_buf); PRINT_REG_SERIAL("EAX: 0x", regs->eax, reg_buf);
-        PRINT_REG_VGA("EBX: 0x", regs->ebx, reg_buf); PRINT_REG_SERIAL("EBX: 0x", regs->ebx, reg_buf);
-        PRINT_REG_VGA("ECX: 0x", regs->ecx, reg_buf); PRINT_REG_SERIAL("ECX: 0x", regs->ecx, reg_buf);
-        PRINT_REG_VGA("EDX: 0x", regs->edx, reg_buf); PRINT_REG_SERIAL("EDX: 0x", regs->edx, reg_buf);
-        vga_puts("\n"); serial_puts("\n");
-
-        PRINT_REG_VGA("ESI: 0x", regs->esi, reg_buf); PRINT_REG_SERIAL("ESI: 0x", regs->esi, reg_buf);
-        PRINT_REG_VGA("EDI: 0x", regs->edi, reg_buf); PRINT_REG_SERIAL("EDI: 0x", regs->edi, reg_buf);
-        PRINT_REG_VGA("EBP: 0x", regs->ebp, reg_buf); PRINT_REG_SERIAL("EBP: 0x", regs->ebp, reg_buf);
+        PRINT_REG_SERIAL("ESI: 0x", regs->esi, reg_buf);
+        PRINT_REG_SERIAL("EDI: 0x", regs->edi, reg_buf);
+        PRINT_REG_SERIAL("EBP: 0x", regs->ebp, reg_buf);
 
         uint32_t current_esp = regs->esp_dummy;
-        if ((regs->cs & 0x3) != 0) { // Check CPL from CS
+        if ((regs->cs & 0x3) != 0) {
             current_esp = regs->useresp;
         }
-        PRINT_REG_VGA("ESP: 0x", current_esp, reg_buf); PRINT_REG_SERIAL("ESP: 0x", current_esp, reg_buf);
-        vga_puts("\n"); serial_puts("\n");
+        PRINT_REG_SERIAL("ESP: 0x", current_esp, reg_buf);
+        serial_puts("\n");
 
-        PRINT_REG_VGA("EIP: 0x", regs->eip, reg_buf); PRINT_REG_SERIAL("EIP: 0x", regs->eip, reg_buf);
-        PRINT_REG_VGA("CS:  0x", regs->cs, reg_buf); PRINT_REG_SERIAL("CS:  0x", regs->cs, reg_buf);
-        PRINT_REG_VGA("DS:  0x", regs->ds, reg_buf); PRINT_REG_SERIAL("DS:  0x", regs->ds, reg_buf);
-        vga_puts("\n"); serial_puts("\n");
+        PRINT_REG_SERIAL("EIP: 0x", regs->eip, reg_buf);
+        PRINT_REG_SERIAL("CS:  0x", regs->cs, reg_buf);
+        PRINT_REG_SERIAL("DS:  0x", regs->ds, reg_buf);
+        serial_puts("\n");
 
-        PRINT_REG_VGA("EFLAGS: 0x", regs->eflags, reg_buf); PRINT_REG_SERIAL("EFLAGS: 0x", regs->eflags, reg_buf);
-        vga_puts("\n"); serial_puts("\n");
+        PRINT_REG_SERIAL("EFLAGS: 0x", regs->eflags, reg_buf);
+        serial_puts("\n");
 
-        if (regs->int_no == 8 || (regs->int_no >= 10 && regs->int_no <= 14) || regs->int_no == 17 || regs->int_no == 30) {
-            PRINT_REG_VGA("Error Code: 0x", regs->err_code, reg_buf); PRINT_REG_SERIAL("Error Code: 0x", regs->err_code, reg_buf);
-            vga_puts("\n"); serial_puts("\n");
+        if (regs->int_no == 8 || (regs->int_no >= 10 && regs->int_no <= 14) || 
+            regs->int_no == 17 || regs->int_no == 30) {
+            PRINT_REG_SERIAL("Error Code: 0x", regs->err_code, reg_buf);
+            serial_puts("\n");
         }
-        PRINT_REG_VGA("Interrupt: 0x", regs->int_no, reg_buf); PRINT_REG_SERIAL("Interrupt: 0x", regs->int_no, reg_buf);
-        vga_puts("\n\n"); serial_puts("\n\n");
+        PRINT_REG_SERIAL("Interrupt: 0x", regs->int_no, reg_buf);
+        serial_puts("\n\n");
 
-        // Undefine macros after use to keep them local
-        #undef PRINT_REG_VGA
         #undef PRINT_REG_SERIAL
-
-    } else {
-        vga_puts("Register state not available.\n\n");
-        serial_puts("Register state not available.\n\n");
     }
 
-    // Assuming print_backtrace is always available if linked.
-    print_backtrace(10);
+    // Skip unsafe backtrace - KRM will do its own safe backtrace collection
+    serial_puts("\nEntering Kernel Recovery Mode (KRM)...\n");
 
-    vga_puts("\nSystem Halted. Please reboot.");
-    serial_puts("\nSystem Halted. Please reboot.\n");
+    // ENTER KERNEL RECOVERY MODE - THIS DOES NOT RETURN
+    krm_enter(regs, message, file, line);
 
+    // Should never reach here
     asm volatile ("hlt");
 }
 
 void panic_msg_loc(const char *message, const char *file, uint32_t line) {
-    // Assuming panic_screen is always available if linked.
-    // No valid 'registers_t' struct is available here as it's a software panic.
-    panic_screen(NULL, message, file, line);
-    // Fallback removed as panic_screen itself will halt. If panic_screen is not linked,
-    // it's a build issue. If it were to return (it shouldn't), the hlt in panic_screen handles it.
+    // Software panic - no register state available
+    // Enter KRM directly (does not return)
+    krm_enter(NULL, message, file, line);
+    
+    // Should never reach here
+    asm volatile ("cli");
+    asm volatile ("hlt");
 }

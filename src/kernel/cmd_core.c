@@ -3,7 +3,7 @@
  * ./src/kernel/cmd_core.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.8.8
  * === AOS HEADER END ===
  */
 
@@ -18,6 +18,7 @@
 #include <io.h>
 #include <acpi.h>
 #include <shell.h>
+#include <panic.h>  // For test panic command
 
 // Forward declarations
 extern void kprint(const char *str);
@@ -392,6 +393,21 @@ static void cmd_poweroff(const char* args) {
     kprint("");
 }
 
+// Test panic command to demonstrate KRM
+static void cmd_test_panic(const char* args) {
+    vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+    vga_puts("WARNING: This will trigger a kernel panic and enter KRM.\n");
+    vga_puts("Press any key to continue or Ctrl+C to cancel...\n");
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    
+    // Simple wait (in real implementation, would wait for keypress)
+    for (volatile int i = 0; i < 50000000; i++);
+    
+    // Trigger a panic with the provided message or a default
+    const char* msg = (args && *args) ? args : "Test panic triggered by user command";
+    panic(msg);
+}
+
 void cmd_module_core_register(void) {
     command_register_with_category("help", "[category]", "Display all available commands organized by category", "System", cmd_help);
     command_register_with_category("version", "", "Display operating system version information", "System", cmd_version);
@@ -402,4 +418,5 @@ void cmd_module_core_register(void) {
     command_register_with_category("halt", "", "Halt the system", "System", cmd_halt);
     command_register_with_category("shutdown", "[-c] [+seconds|now] [message]", "Power off system (default: 20s, -c: cancel)", "System", cmd_poweroff);
     command_register_with_category("poweroff", "[-c] [+seconds|now] [message]", "Alias for shutdown", "System", cmd_poweroff);
+    command_register_with_category("testpanic", "[message]", "Trigger a test panic to demonstrate KRM (WARNING: will crash)", "System", cmd_test_panic);
 }

@@ -66,6 +66,7 @@
 #include <dev/pcnet.h> // For PCnet NIC driver (v0.8.1)
 #include <acpi.h>      // For ACPI power management (v0.8.2)
 #include <apm.h>       // For aOS Package Manager (v0.8.5)
+#include <krm.h>       // For Kernel Recovery Mode (v0.8.8)
 
 // Simple kernel print function (prints to VGA for now)
 // Ensure vga_puts is available and initialized before kprint is used extensively.
@@ -92,6 +93,10 @@ void display_prompt(void) {
 }
 
 void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
+    // Initialize Kernel Recovery Mode FIRST - before any other subsystems
+    // This ensures KRM is always available if anything goes wrong anywhere
+    krm_init();
+    
     // Initialize CPU-specific features (GDT, segment selectors, etc.)
     arch_cpu_init();
     serial_init(); // Initialize serial port early for status messages
@@ -180,6 +185,21 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     // Initialize Virtual Memory Manager
     init_vmm();
     serial_puts("Virtual Memory Manager initialized.\n");
+    
+    // ============================================================
+    // TEST CODE: Intentional crash to test KRM 
+    // Uncomment to test KRM functionality
+    // ============================================================
+    // serial_puts("WARNING: Triggering test crash in 3...\n");
+    // for (volatile int i = 0; i < 50000000; i++);
+    // serial_puts("2...\n");
+    // for (volatile int i = 0; i < 50000000; i++);
+    // serial_puts("1...\n");
+    // for (volatile int i = 0; i < 50000000; i++);
+    // serial_puts("BOOM! Dereferencing NULL pointer...\n");
+    // volatile int* null_ptr = (int*)0x0;
+    // *null_ptr = 42; // Triggers page fault -> KRM
+    // ============================================================
     
     // Initialize PCI subsystem (v0.8.0)
     pci_init();
