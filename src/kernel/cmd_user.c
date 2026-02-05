@@ -279,7 +279,7 @@ static void cmd_fsmode(const char* args) {
     int mode = fs_layout_get_mode();
     vga_puts("Filesystem mode: ");
     if (mode == FS_MODE_LOCAL) {
-        kprint("LOCAL (SimpleFS on disk)");
+        kprint("LOCAL (disk filesystem)");
         kprint("  User data will persist across reboots");
     } else {
         kprint("ISO (ramfs in memory)");

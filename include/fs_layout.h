@@ -33,7 +33,7 @@
 
 // Filesystem mode flags
 #define FS_MODE_ISO   0  // Running on ramfs (ISO mode)
-#define FS_MODE_LOCAL 1  // Running on SimpleFS (local mode)
+#define FS_MODE_LOCAL 1  // Running on disk filesystem (SimpleFS or FAT32)
 
 /**
  * Initialize filesystem layout

@@ -3,7 +3,7 @@
  * ./src/kernel/kernel.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.8.8
  * === AOS HEADER END ===
  */
 
@@ -16,6 +16,7 @@
 #include <fs/vfs.h>            // For Virtual File System
 #include <fs/ramfs.h>          // For RAM-based filesystem
 #include <fs/simplefs.h>       // For storage-based filesystem
+#include <fs/fat32.h>          // For FAT32 filesystem
 #include <fs/devfs.h>          // For device pseudo-files
 #include <fs/procfs.h>         // For process pseudo-files
 #include <dev/ata.h>           // For ATA/IDE disk driver
@@ -259,19 +260,30 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     simplefs_init();
     serial_puts("SimpleFS initialized successfully.\n");
     
+    // Initialize FAT32 driver
+    serial_puts("About to initialize FAT32...\n");
+    fat32_init();
+    serial_puts("FAT32 initialized successfully.\n");
+    
     // Try to mount SimpleFS as root filesystem
     serial_puts("About to mount root filesystem...\n");
     if (ata_drive_available()) {
-        // Try to mount existing SimpleFS
+        // Try to mount existing SimpleFS first, then FAT32
         if (vfs_mount(NULL, "/", "simplefs", 0) != VFS_OK) {
-            serial_puts("SimpleFS mount failed - disk appears unformatted\n");
-            serial_puts("Falling back to ramfs. Use 'format' command to initialize disk.\n");
-            unformatted_disk_detected = 1;  // Set flag for shell notification
-            simplefs_mounted = 0;  // SimpleFS not mounted
-            goto use_ramfs;
+            serial_puts("SimpleFS mount failed - trying FAT32...\n");
+            if (vfs_mount(NULL, "/", "fat32", 0) != VFS_OK) {
+                serial_puts("FAT32 mount failed - disk appears unformatted\n");
+                serial_puts("Falling back to ramfs. Use 'format' command to initialize disk.\n");
+                unformatted_disk_detected = 1;  // Set flag for shell notification
+                simplefs_mounted = 0;  // No filesystem mounted
+                goto use_ramfs;
+            } else {
+                serial_puts("FAT32 mounted successfully.\n");
+                simplefs_mounted = 1;  // Disk mounted (FAT32 or SimpleFS enables LOCAL mode)
+            }
         } else {
             serial_puts("SimpleFS mounted successfully.\n");
-            simplefs_mounted = 1;  // SimpleFS successfully mounted
+            simplefs_mounted = 1;  // Disk mounted (FAT32 or SimpleFS enables LOCAL mode)
         }
     } else {
         serial_puts("No ATA drive available, using ramfs\n");
@@ -297,7 +309,7 @@ mount_done:
     serial_puts("Root filesystem mounted.\n");
     
     // Detect filesystem mode for layout initialization
-    // Use LOCAL mode only if SimpleFS was successfully mounted
+    // Use LOCAL mode if any disk filesystem (SimpleFS or FAT32) was successfully mounted
     int fs_mode = simplefs_mounted ? FS_MODE_LOCAL : FS_MODE_ISO;
     
     // Initialize filesystem layout (create standard directories)

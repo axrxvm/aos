@@ -15,7 +15,7 @@ aOS is a bare-metal, multiboot-compliant i386 (as of now) operating system kerne
 ### Key Capabilities
 
 - **Full TCP/IP networking stack** with Ethernet, ARP, IPv4, ICMP, UDP, TCP, DHCP, DNS, HTTP, FTP, and TLS support
-- **Multiple filesystem implementations**: ramfs (volatile), SimpleFS (disk-backed), devfs, procfs with VFS abstraction
+- **Multiple filesystem implementations**: ramfs (volatile), SimpleFS, FAT32, devfs, procfs with VFS abstraction
 - **Advanced memory management**: Physical Memory Manager (PMM), two-level paging, Virtual Memory Manager with 2MB kernel heap
 - **Process management**: Multi-tasking support, fork/exec semantics, priority scheduling, IPC mechanisms
 - **Security features**: User/group authentication with SHA-256 password hashing, file permissions, sandboxing ("Cage" system)
@@ -49,7 +49,7 @@ aOS is a bare-metal, multiboot-compliant i386 (as of now) operating system kerne
 | **Link Layer** | Ethernet, Loopback |
 | **Network Drivers** | E1000, PCnet (PCI) |
 | **VFS Layer** | Path resolution, vnodes, mounts |
-| **Filesystems** | ramfs, SimpleFS, devfs, procfs |
+| **Filesystems** | ramfs, SimpleFS, FAT32, devfs, procfs |
 | **Storage Drivers** | ATA/IDE PIO (512B sectors) |
 | **Process Management** | Scheduling, fork/exec, IPC |
 | **Memory Management** | PMM → Paging → VMM |
@@ -125,7 +125,13 @@ aOS is a bare-metal, multiboot-compliant i386 (as of now) operating system kerne
 - 512-byte fixed block size aligned with ATA sectors
 - Inode-based file/directory metadata
 - Linked-list block allocation for files
-- Automatic formatting via `format` command
+
+#### FAT32
+
+- Standard FAT32 implementation with VFAT long filenames
+- Compatible with Windows/Linux formatted disks
+- Full read/write support with cluster allocation
+- Persistent storage for LOCAL mode
 
 #### devfs
 

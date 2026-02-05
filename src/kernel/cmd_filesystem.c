@@ -15,6 +15,7 @@
 #include <syscall.h>
 #include <fs/vfs.h>
 #include <fs/simplefs.h>
+#include <fs/fat32.h>
 #include <dev/ata.h>
 #include <user.h>
 #include <editor.h>
@@ -634,8 +635,6 @@ static void cmd_disk_info(const char* args) {
 }
 
 static void cmd_format(const char* args) {
-    (void)args;
-    
     if (!ata_drive_available()) {
         kprint("Error: No ATA drive available to format");
         return;
@@ -648,22 +647,110 @@ static void cmd_format(const char* args) {
     char buf[128];
     char temp[32];
     
-    kprint("WARNING: This will erase all data on the disk!");
+    // Parse filesystem type argument
+    const char* fstype = NULL;
+    if (args && *args) {
+        // Skip whitespace
+        while (*args == ' ' || *args == '\t') args++;
+        if (*args) {
+            fstype = args;
+        }
+    }
     
-    strcpy(buf, "Formatting ");
+    // Show options if no argument provided
+    if (!fstype || *fstype == '\0') {
+        kprint("=== Disk Format Utility ===");
+        kprint("");
+        strcpy(buf, "Disk Size: ");
+        itoa(disk_mb, temp, 10);
+        strcat(buf, temp);
+        strcat(buf, " MB (");
+        itoa(total_sectors, temp, 10);
+        strcat(buf, temp);
+        strcat(buf, " sectors)");
+        kprint(buf);
+        kprint("");
+        kprint("Available Filesystem Types:");
+        kprint("  simplefs  - aOS native filesystem (simple, fast)");
+        kprint("  fat32     - FAT32 filesystem (compatible with Windows/Linux/macOS, slow)");
+        kprint("");
+        kprint("Usage: format <filesystem-type>");
+        kprint("Example: format simplefs");
+        kprint("Example: format fat32");
+        kprint("");
+        kprint("WARNING: Formatting will erase ALL data on the disk!");
+        return;
+    }
+    
+    // Validate filesystem type
+    int result = -1;
+    int is_valid = 0;
+    
+    if (strcmp(fstype, "simplefs") == 0) {
+        is_valid = 1;
+    } else if (strcmp(fstype, "fat32") == 0) {
+        is_valid = 1;
+    }
+    
+    if (!is_valid) {
+        kprint("Error: Unknown filesystem type");
+        kprint("Supported types: simplefs, fat32");
+        kprint("Use 'format' without arguments to see options");
+        return;
+    }
+    
+    // Display warning and format information
+    kprint("=== WARNING: FORMAT DISK ===");
+    kprint("");
+    kprint("This will ERASE ALL DATA on the disk!");
+    kprint("");
+    strcpy(buf, "Disk Size:      ");
     itoa(disk_mb, temp, 10);
     strcat(buf, temp);
-    strcat(buf, "MB disk with SimpleFS (");
-    itoa(num_blocks, temp, 10);
-    strcat(buf, temp);
-    strcat(buf, " blocks)...");
+    strcat(buf, " MB");
     kprint(buf);
     
-    if (simplefs_format(0, num_blocks) == 0) {
-        kprint("Disk formatted successfully.");
-        kprint("Reboot to mount the new filesystem.");
+    strcpy(buf, "Filesystem:     ");
+    strcat(buf, fstype);
+    kprint(buf);
+    
+    if (strcmp(fstype, "simplefs") == 0) {
+        strcpy(buf, "Blocks:         ");
+        itoa(num_blocks, temp, 10);
+        strcat(buf, temp);
+        kprint(buf);
+    } else if (strcmp(fstype, "fat32") == 0) {
+        strcpy(buf, "Sectors:        ");
+        itoa(total_sectors, temp, 10);
+        strcat(buf, temp);
+        kprint(buf);
+        
+        strcpy(buf, "Volume Label:   aOS_DISK");
+        kprint(buf);
+    }
+    
+    kprint("");
+    kprint("Formatting...");
+    
+    // Perform format
+    if (strcmp(fstype, "simplefs") == 0) {
+        result = simplefs_format(0, num_blocks);
+    } else if (strcmp(fstype, "fat32") == 0) {
+        result = fat32_format(0, total_sectors, "aOS_DISK");
+    }
+    
+    kprint("");
+    if (result == 0) {
+        kprint("SUCCESS: Disk formatted successfully!");
+        kprint("");
+        kprint("The disk has been formatted with ");
+        kprint(fstype);
+        kprint("");
+        kprint("Please reboot to mount the new filesystem.");
+        kprint("Use 'reboot' command to restart the system.");
     } else {
-        kprint("Failed to format disk.");
+        kprint("ERROR: Failed to format disk");
+        kprint("Please check the disk and try again.");
     }
 }
 
