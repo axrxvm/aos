@@ -53,7 +53,7 @@ jobs:
     
     - name: Generate build report
       run: |
-        ISO_SIZE=$(stat -c%s build/aos.iso)
+        ISO_SIZE=$(stat -c%s build/aOS.iso)
         BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
         COMMIT_HASH=$(git rev-parse --short HEAD)
         
