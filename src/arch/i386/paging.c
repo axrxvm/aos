@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/arch/i386/paging.c
+ * src/arch/i386/paging.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -15,6 +15,7 @@
 #include <serial.h>
 #include <stdlib.h>
 #include <panic.h>
+#include <debug.h>
 #include <string.h>
 
 // Current page directory
@@ -220,7 +221,13 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
             while(1);
         }
         
+        // Page directory entry needs USER flag if any page in the table needs it
         dir->cpu_dir->entries[dir_index] = table_phys | PAGE_PRESENT | PAGE_WRITE | (flags & PAGE_USER);
+    } else {
+        // Update existing page directory entry to include USER flag if needed
+        if (flags & PAGE_USER) {
+            dir->cpu_dir->entries[dir_index] |= PAGE_USER;
+        }
     }
     
     // Get the page table - double-check it's valid
@@ -340,7 +347,7 @@ void page_fault_handler(registers_t *regs) {
     int reserved = regs->err_code & 0x8;      // Overwritten CPU-reserved bits?
     int fetch = regs->err_code & 0x10;        // Instruction fetch?
     
-    // Print error information to serial (safer than VGA during fault)
+    // Print error information to serial (for debugging)
     serial_puts("\n=== PAGE FAULT ===");
     serial_puts("\nFaulting address: 0x");
     char addr_str[12];
@@ -360,20 +367,38 @@ void page_fault_handler(registers_t *regs) {
     if (fetch) serial_puts("[FETCH] ");
     serial_puts("\n");
     
-    // Try to provide more context
+    // Build descriptive panic message
+    char message[128];
+    const char* prefix = "Page fault at 0x";
+    const char* mid;
+    
     if (faulting_address < 0x1000) {
-        serial_puts("Null pointer dereference!\n");
+        mid = " (null pointer dereference)";
     } else if (faulting_address >= 0xC0000000) {
-        serial_puts("Kernel space access fault!\n");
+        mid = " (kernel space access)";
     } else if (faulting_address >= 0x500000 && faulting_address < 0x700000) {
-        serial_puts("Heap access fault!\n");
+        mid = " (heap access)";
+    } else {
+        mid = "";
     }
+    
+    // Construct message
+    int pos = 0;
+    while (*prefix && pos < 110) message[pos++] = *prefix++;
+    itoa(faulting_address, addr_str, 16);
+    char* p = addr_str;
+    while (*p && pos < 115) message[pos++] = *p++;
+    p = (char*)mid;
+    while (*p && pos < 127) message[pos++] = *p++;
+    message[pos] = '\0';
     
     serial_puts("==================\n");
     
-    // Halt the CPU cleanly instead of cascading into triple fault
+    // Enter KRM via panic_screen - this does not return
+    panic_screen(regs, message, __FILE__, __LINE__);
+    
+    // Should never reach here, but just in case
     asm volatile("cli");
-    serial_puts("\nSystem halted due to page fault.\n");
     while(1) {
         asm volatile("hlt");
     }

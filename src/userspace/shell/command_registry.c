@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/command_registry.c
+ * src/userspace/shell/command_registry.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -138,7 +138,16 @@ int execute_command(const char* input) {
                 
                 int vm_result = execute_module_vm_command(cmd_name_buf, args);
                 if (vm_result < 0) {
-                    kprint("[Module command - no handler]\n");
+                    // Command exists but execution failed
+                    if (vm_result == -1) {
+                        kprint("[Error: Module command not found in VM registry]");
+                    } else if (vm_result == -2) {
+                        kprint("[Error: Module command VM is NULL]");
+                    } else if (vm_result == -3) {
+                        kprint("[Error: Module command execution limit exceeded]");
+                    } else {
+                        kprint("[Error: Module command execution failed]");
+                    }
                     return -1;
                 }
             }

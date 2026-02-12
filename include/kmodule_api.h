@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./include/kmodule_api.h
+ * include/kmodule_api.h
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.7
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -202,6 +202,8 @@ struct kmod_ctx {
     void (*sleep_ms)(kmod_ctx_t* ctx, uint32_t ms);
     int (*create_timer)(kmod_ctx_t* ctx, uint32_t interval_ms, 
                        void (*callback)(void* data), void* data);
+    int (*start_timer)(kmod_ctx_t* ctx, int timer_id);
+    int (*stop_timer)(kmod_ctx_t* ctx, int timer_id);
     void (*destroy_timer)(kmod_ctx_t* ctx, int timer_id);
     
     // System Info (KMOD_CAP_SYSINFO)

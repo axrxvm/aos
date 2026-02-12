@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/process.c
+ * src/kernel/process.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -132,6 +132,11 @@ void init_process_manager(void) {
     idle_process->memory_used = 0;
     idle_process->files_open = 0;
     idle_process->children_count = 0;
+    idle_process->privilege_level = 0;  // Kernel mode (ring 0)
+    
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        idle_process->file_descriptors[i] = -1;
+    }
     
     enqueue_process(idle_process);
     
@@ -265,6 +270,12 @@ pid_t process_create(const char* name, void (*entry_point)(void), int priority) 
     proc->memory_used = 0;
     proc->files_open = 0;
     proc->children_count = 0;
+    
+    // Initialize file descriptors
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        proc->file_descriptors[i] = -1;  // -1 means closed
+    }
+    proc->privilege_level = 3;  // User mode by default
     
     // Add to ready queue
     enqueue_process(proc);
@@ -563,11 +574,16 @@ int process_kill(int pid, int signal) {
 
 // Execute new program (replaces current process)
 int process_execve(const char* path, char* const argv[], char* const envp[]) {
-    (void)argv;  // TODO: Pass arguments to new program
     (void)envp;  // TODO: Pass environment to new program
     
     if (!current_process || !path) {
         return -1;
+    }
+    
+    // Count arguments
+    int argc = 0;
+    if (argv) {
+        while (argv[argc]) argc++;
     }
     
     // Destroy current address space
@@ -597,29 +613,15 @@ int process_execve(const char* path, char* const argv[], char* const envp[]) {
                  current_process->user_stack - 8192, 8192,
                  VMM_PRESENT | VMM_WRITE | VMM_USER);
     
-    // Reset context for new program
-    current_process->context.eip = entry_point;
-    current_process->context.esp = current_process->user_stack;
-    current_process->context.ebp = current_process->user_stack;
-    current_process->context.eflags = 0x202;  // IF flag set
-#ifdef ARCH_HAS_SEGMENTATION
-    current_process->context.cs = arch_get_user_code_segment() | 0x3;
-    current_process->context.ds = arch_get_user_data_segment() | 0x3;
-    current_process->context.es = arch_get_user_data_segment() | 0x3;
-    current_process->context.fs = arch_get_user_data_segment() | 0x3;
-    current_process->context.gs = arch_get_user_data_segment() | 0x3;
-    current_process->context.ss = arch_get_user_data_segment() | 0x3;
-#endif
-    current_process->context.cr3 = current_process->address_space->page_dir->physical_addr;
-    
     // Switch to new address space
     switch_address_space(current_process->address_space);
     
-    // Jump to entry point (using iret to switch to user mode)
-    // This is a simplified version - in real OS, we'd properly set up the stack
-    // for iret and return to user mode
+    // Enter ring 3 and execute the program
+    // This function does not return
+    extern void enter_usermode(uint32_t entry_point, uint32_t user_stack, int argc, char** argv);
+    enter_usermode(entry_point, current_process->user_stack, argc, argv);
     
-    // For now, just update the context and it will take effect on next schedule
+    // Never reached
     return 0;
 }
 

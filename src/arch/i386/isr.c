@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/arch/i386/isr.c
+ * src/arch/i386/isr.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -35,12 +35,18 @@ const char *exception_messages[] = {
     "Reserved"                      // 31
 };
 
-// Common handler for CPU exceptions (ISRs 0-31).
+// Common handler for CPU exceptions and software interrupts (ISRs 0-31, 128, etc).
 // regs pointer is passed from assembly stub via 'push esp; call isr_handler_common'
 void isr_handler_common(registers_t* regs) {
-    // Disable further interrupts if this handler is re-entrant or something goes wrong.
-    // asm volatile("cli"); // panic_screen will do this.
+    // Check if there's a registered handler for this interrupt
+    // This allows software interrupts (like INT 0x80 syscall) to be handled
+    if (interrupt_handlers[regs->int_no] != 0) {
+        isr_t handler = interrupt_handlers[regs->int_no];
+        handler(regs);
+        return;  // Return to interrupted code (important for ring 3 syscalls)
+    }
 
+    // No handler registered - this is an unhandled exception, panic
     const char *message;
     if (regs->int_no < sizeof(exception_messages) / sizeof(const char *)) {
         message = exception_messages[regs->int_no];

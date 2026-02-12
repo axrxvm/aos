@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/arch/i386/idt.c
+ * src/arch/i386/idt.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -96,6 +96,11 @@ void init_idt() {
     idt_set_gate(45, (uint32_t)isr45, KERNEL_CS, 0x8E); // IRQ13: FPU/Coprocessor
     idt_set_gate(46, (uint32_t)isr46, KERNEL_CS, 0x8E); // IRQ14: Primary ATA HDD
     idt_set_gate(47, (uint32_t)isr47, KERNEL_CS, 0x8E); // IRQ15: Secondary ATA HDD
+
+    // System call gate - INT 0x80 (128)
+    // DPL=3 (0xEE) to allow ring 3 user code to invoke syscalls
+    extern void isr128(void);
+    idt_set_gate(128, (uint32_t)isr128, KERNEL_CS, 0xEE); // INT 0x80: Syscall (DPL=3)
 
     // Load the IDT register.
     idt_load((uint32_t)&idt_ptr);

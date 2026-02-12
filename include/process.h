@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./include/process.h
+ * include/process.h
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -37,6 +37,14 @@ typedef enum {
 // Maximum number of processes
 #define MAX_PROCESSES 256
 
+// Maximum number of open files per process
+#define MAX_OPEN_FILES 16
+
+// Standard file descriptors
+#define STDIN_FILENO  0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+
 // Process ID type
 typedef int pid_t;
 
@@ -66,6 +74,9 @@ typedef struct process {
     
     uint32_t kernel_stack;          // Kernel stack pointer
     uint32_t user_stack;            // User stack pointer
+    
+    int file_descriptors[MAX_OPEN_FILES];  // Open file descriptors
+    uint32_t privilege_level;       // 0=kernel, 3=user
     
     int exit_status;                // Exit status code
     uint32_t wake_time;             // Wake up time (for sleeping)

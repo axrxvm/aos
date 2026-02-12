@@ -155,3 +155,13 @@ common_irq_stub:
     popa                  ; Restore all general purpose registers
     add esp, 8            ; Clean up the pushed error code (dummy) and interrupt number
     iret                  ; Return from interrupt (restores EIP, CS, EFLAGS, and optionally UserESP, UserSS)
+
+; INT 0x80 - System Call Handler
+; This needs DPL=3 in the IDT to allow ring 3 code to invoke it
+; Uses the common ISR stub (not IRQ stub) so interrupt_handlers[] table is used
+global isr128
+isr128:
+    cli
+    push dword 0          ; dummy error code
+    push dword 128        ; interrupt number (can't use push byte for values >= 128)
+    jmp isr_stub_common

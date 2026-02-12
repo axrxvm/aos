@@ -56,6 +56,15 @@ GRUB_DIR = $(ISO_DIR)/boot/grub
 ISO = $(BUILD_DIR)/aOS.iso
 DISK_IMG = disk.img
 
+# === Userspace binary build ===
+UBIN_DIR = ubin
+UBIN_CFLAGS = $(ARCH_CFLAGS) -ffreestanding -nostdlib -fno-pic -fno-pie -O2 -Wall -Wextra
+AOSH_SRC = $(UBIN_DIR)/aosh.c
+AOSH_OBJ = $(BUILD_DIR)/ubin/aosh.o
+AOSH_ELF = $(BUILD_DIR)/ubin/aosh.elf
+AOSH_BIN = $(BUILD_DIR)/ubin/aosh.bin
+AOSH_PAYLOAD = $(BUILD_DIR)/ubin/aosh_payload.o
+
 # ==== Targets ====
 
 # Default target
@@ -76,12 +85,32 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.s
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 
-# Link ELF
-$(KERNEL_ELF): linker.ld $(ALL_OBJECTS)
+# === Userspace binary targets ===
+$(AOSH_OBJ): $(AOSH_SRC)
+	@echo "Compiling userspace shell: $<..."
+	@mkdir -p $(dir $@)
+	$(CC) $(UBIN_CFLAGS) -c $< -o $@
+
+$(AOSH_ELF): $(AOSH_OBJ) ubin.ld
+	@echo "Linking userspace shell..."
+	$(LD) $(ARCH_LDFLAGS) -T ubin.ld -o $@ $(AOSH_OBJ)
+
+$(AOSH_BIN): $(AOSH_ELF)
+	@echo "Creating userspace flat binary..."
+	objcopy -O binary $< $@
+
+$(AOSH_PAYLOAD): $(AOSH_BIN)
+	@echo "Embedding userspace binary in kernel..."
+	cd $(dir $<) && objcopy -I binary -O elf32-i386 -B i386 \
+		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+		$(notdir $<) $(notdir $@)
+
+# Link ELF (kernel + embedded userspace payload)
+$(KERNEL_ELF): linker.ld $(ALL_OBJECTS) $(AOSH_PAYLOAD)
 	@echo "Creating object file directories..."
 	@mkdir -p $(sort $(dir $(ALL_OBJECTS)))
 	@echo "Linking kernel ELF..."
-	$(LD) $(LDFLAGS) -T linker.ld -o $(KERNEL_ELF) $(ALL_OBJECTS)
+	$(LD) $(LDFLAGS) -T linker.ld -o $(KERNEL_ELF) $(ALL_OBJECTS) $(AOSH_PAYLOAD)
 
 # Create the ISO with the kernel and grub configuration
 iso: $(KERNEL_ELF) boot/grub/grub.cfg

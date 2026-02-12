@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/cmd_network.c
+ * src/userspace/commands/cmd_network.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.5
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -37,6 +37,7 @@ static uint16_t ping_sequence = 0;
 static uint32_t ping_dest_ip = 0;
 static volatile int ping_reply_received = 0;  // Flag for current ping reply
 #define REPO_BASE_URL "http://repo.aosproject.workers.dev/main/"
+#define TEMPDB_BASE_URL "http://tempdb.aosproject.workers.dev/"
 
 // Ping callback
 static void ping_reply_handler(uint32_t src_ip, uint16_t sequence, uint32_t rtt_ms) {
@@ -460,7 +461,7 @@ void cmd_dns(const char* args) {
 // HTTP GET command
 void cmd_wget(const char* args) {
     if (!args || *args == '\0') {
-        vga_puts("Usage: wget <url|@repo/path> [output_file]\n");
+        vga_puts("Usage: wget <url|@repo/path|@tempdb/path> [output_file]\n");
         return;
     }
     // Parse arguments
@@ -494,6 +495,22 @@ void cmd_wget(const char* args) {
         char full_url[256];
         full_url[0] = '\0';
         strncat(full_url, REPO_BASE_URL, sizeof(full_url) - 1);
+        strncat(full_url, path, sizeof(full_url) - strlen(full_url) - 1);
+        strncpy(url, full_url, sizeof(url) - 1);
+        url[sizeof(url) - 1] = '\0';
+    }
+    // Expand @tempdb shorthand
+    else if (strncmp(url, "@tempdb", 7) == 0) {
+        const char* path = url + 7;
+        // Require a path
+        if (*path == '\0') {
+            vga_puts("Error: @tempdb requires a file path\n");
+            return;
+        }
+        if (*path == '/') path++;
+        char full_url[256];
+        full_url[0] = '\0';
+        strncat(full_url, TEMPDB_BASE_URL, sizeof(full_url) - 1);
         strncat(full_url, path, sizeof(full_url) - strlen(full_url) - 1);
         strncpy(url, full_url, sizeof(url) - 1);
         url[sizeof(url) - 1] = '\0';
@@ -1105,7 +1122,7 @@ void cmd_module_network_register(void) {
     
     command_register_with_category(
         "wget",
-        "wget <url> [output_file]",
+        "wget <url|@repo/path|@tempdb/path> [output_file]",
         "Download file via HTTP",
         "Network",
         cmd_wget

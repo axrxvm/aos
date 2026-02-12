@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./include/kmodule.h
+ * include/kmodule.h
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.7
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 

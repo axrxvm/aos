@@ -329,9 +329,24 @@ apm kmodule remove <name>         # Uninstall module (alias: u)
 - List service status
 - Runlevel transitions
 
+### aosh - The aOS Shell
+
+**True ring 3 userspace shell with hardware privilege separation:**
+
+- **CPU Ring Protection**: Shell runs entirely in ring 3 (unprivileged mode)
+- **Syscall Interface**: All kernel interactions via INT 0x80 (10 dedicated syscalls)
+- **Standalone Binary**: Compiled as position-independent code at `0x08048000`
+- **Zero Kernel Dependencies**: No kernel headers, implements own string operations
+- **Login System**: Username/password authentication with session management
+- **Kernel Command Dispatch**: All commands execute in ring 0 via `SYS_KCMD` syscall
+- **Colored Prompt**: Shows `[user@aOS:cwd]$` with root indicator (`#`)
+- **Safe I/O**: All VGA and keyboard access via syscalls (no direct hardware access)
+
+**aosh provides true OS security by enforcing hardware-level privilege separation between userspace shell and kernel operations.**
+
 ### Shell & Commands
 
-**Built-in shell with 50+ commands organized by category:**
+**Built-in command registry with 50+ commands organized by category:**
 
 #### System
 

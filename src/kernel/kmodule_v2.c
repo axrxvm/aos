@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/kmodule_v2.c
+ * src/kernel/kmodule_v2.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.7
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -27,6 +27,8 @@
 #include <command_registry.h>
 #include <vga.h>
 #include <stdarg.h>
+#include <syscall.h>
+#include <stdlib.h>
 
 // External memory info from kernel.c
 extern uint32_t total_memory_kb;
@@ -199,6 +201,14 @@ static mod_cmd_entry_t* find_module_command(const char* name) {
     return NULL;
 }
 
+// Wrapper function for module commands - to be called from command_registry
+static void module_cmd_wrapper(const char* args) {
+    // Get the command name from the VM context
+    // This is tricky - we need to find which command was invoked
+    // For now, we'll search through the module commands
+    (void)args;
+}
+
 // Execute a module VM command
 int execute_module_vm_command(const char* cmd_name, const char* args) {
     if (!cmd_name) return -1;
@@ -257,8 +267,6 @@ int register_module_cmd(const char* name, uint32_t handler_offset,
             strncpy(module_commands[i].cmd_name, name, 63);
             module_commands[i].cmd_name[63] = '\0';
             module_commands[i].handler_offset = handler_offset;
-
-            module_commands[i].vm = vm;
             module_commands[i].vm = vm;
             module_commands[i].valid = 1;
             module_command_count++;
@@ -268,9 +276,27 @@ int register_module_cmd(const char* name, uint32_t handler_offset,
     return -1;  // No free slots
 }
 
+// Unregister all commands for a module (called during cleanup)
+static void unregister_module_commands(akm_vm_t* vm) {
+    if (!vm) return;
+    
+    for (int i = 0; i < MAX_MODULE_COMMANDS; i++) {
+        if (module_commands[i].valid && module_commands[i].vm == vm) {
+            module_commands[i].valid = 0;
+            module_commands[i].vm = NULL;
+            module_command_count--;
+        }
+    }
+}
+
 static int api_register_command(kmod_ctx_t* ctx, const kmod_command_t* cmd) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_COMMAND)) return KMOD_ERR_CAPABILITY;
-    if (!cmd || !cmd->name) return KMOD_ERR_INVALID;
+    if (!cmd || !cmd->name || !cmd->name[0]) return KMOD_ERR_INVALID;
+    
+    // Validate name length
+    size_t name_len = 0;
+    while (cmd->name[name_len] && name_len < 64) name_len++;
+    if (name_len == 0 || name_len >= 64) return KMOD_ERR_INVALID;
     
     // Check if this is a module command that was registered with a VM handler
     mod_cmd_entry_t* mod_cmd = find_module_command(cmd->name);
@@ -279,19 +305,21 @@ static int api_register_command(kmod_ctx_t* ctx, const kmod_command_t* cmd) {
         // This is a VM command - register with a wrapper
         // For now, register with NULL handler since we need the VM wrapper
         // The VM command wrapper will be called through register_module_cmd
-        command_register_with_category(cmd->name, cmd->syntax, cmd->description, 
-                                       cmd->category, NULL);
+        command_register_with_category(cmd->name, cmd->syntax ? cmd->syntax : "", 
+                                       cmd->description ? cmd->description : "", 
+                                       cmd->category ? cmd->category : "Module", NULL);
     } else {
         // Regular command or no VM handler
-        command_register_with_category(cmd->name, cmd->syntax, cmd->description, 
-                                       cmd->category, NULL);
+        command_register_with_category(cmd->name, cmd->syntax ? cmd->syntax : "", 
+                                       cmd->description ? cmd->description : "", 
+                                       cmd->category ? cmd->category : "Module", NULL);
     }
     
-    serial_puts("Registered command: ");
+    serial_puts("[MOD] Registered command: ");
     serial_puts(cmd->name);
     serial_puts("\n");
     
-    return 0;
+    return KMOD_OK;
 }
 
 static int api_unregister_command(kmod_ctx_t* ctx, const char* name) {
@@ -387,7 +415,34 @@ static int api_create_timer(kmod_ctx_t* ctx, uint32_t interval_ms,
             return module_timers[i].id;
         }
     }
-    return KMOD_ERR_MEMORY;
+    return KMOD_ERR_LIMIT;
+}
+
+static int api_start_timer(kmod_ctx_t* ctx, int timer_id) {
+    if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return KMOD_ERR_CAPABILITY;
+    
+    for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
+        if (module_timers[i].active && module_timers[i].id == timer_id) {
+            if (module_timers[i].owner != ctx) return KMOD_ERR_CAPABILITY;
+            // Timer is already active, nothing to do
+            return 0;
+        }
+    }
+    return KMOD_ERR_NOTFOUND;
+}
+
+static int api_stop_timer(kmod_ctx_t* ctx, int timer_id) {
+    if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return KMOD_ERR_CAPABILITY;
+    
+    for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
+        if (module_timers[i].active && module_timers[i].id == timer_id) {
+            if (module_timers[i].owner != ctx) return KMOD_ERR_CAPABILITY;
+            // Mark as inactive but don't free slot
+            module_timers[i].active = 0;
+            return 0;
+        }
+    }
+    return KMOD_ERR_NOTFOUND;
 }
 
 static void api_destroy_timer(kmod_ctx_t* ctx, int timer_id) {
@@ -473,32 +528,30 @@ static void api_disable_irq(kmod_ctx_t* ctx, uint8_t irq) {
 // --- VFS stubs ---
 static int api_vfs_open(kmod_ctx_t* ctx, const char* path, uint32_t flags) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_FILESYSTEM)) return -1;
-    (void)path; (void)flags;
-    return -1;  // TODO: implement
+    if (!path) return -1;
+    return sys_open(path, flags);
 }
 
 static int api_vfs_close(kmod_ctx_t* ctx, int fd) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_FILESYSTEM)) return -1;
-    (void)fd;
-    return -1;  // TODO: implement
+    return sys_close(fd);
 }
 
 static int api_vfs_read(kmod_ctx_t* ctx, int fd, void* buf, size_t size) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_FILESYSTEM)) return -1;
-    (void)fd; (void)buf; (void)size;
-    return -1;  // TODO: implement
+    if (!buf) return -1;
+    return sys_read(fd, buf, size);
 }
 
 static int api_vfs_write(kmod_ctx_t* ctx, int fd, const void* buf, size_t size) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_FILESYSTEM)) return -1;
-    (void)fd; (void)buf; (void)size;
-    return -1;  // TODO: implement
+    if (!buf) return -1;
+    return sys_write(fd, buf, size);
 }
 
 static int api_vfs_seek(kmod_ctx_t* ctx, int fd, int32_t offset, int whence) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_FILESYSTEM)) return -1;
-    (void)fd; (void)offset; (void)whence;
-    return -1;  // TODO: implement
+    return sys_lseek(fd, offset, whence);
 }
 
 // --- Process stubs ---
@@ -632,6 +685,8 @@ static void init_module_context(kmod_ctx_t* ctx, const char* name, uint32_t caps
     ctx->get_ticks = api_get_ticks;
     ctx->sleep_ms = api_sleep_ms;
     ctx->create_timer = api_create_timer;
+    ctx->start_timer = api_start_timer;
+    ctx->stop_timer = api_stop_timer;
     ctx->destroy_timer = api_destroy_timer;
     
     ctx->get_sysinfo = api_get_sysinfo;
@@ -675,6 +730,10 @@ void init_kmodules_v2(void) {
     memset(module_irqs, 0, sizeof(module_irqs));
     module_irq_count = 0;
     
+    // Initialize command table
+    memset(module_commands, 0, sizeof(module_commands));
+    module_command_count = 0;
+    
     // Reset name storage
     name_storage_idx = 0;
     
@@ -712,7 +771,7 @@ int kmodule_load_v2(const void* data, size_t len) {
     if (!v2_initialized) init_kmodules_v2();
     
     if (!data || len < sizeof(akm_header_v2_t)) {
-        serial_puts("Error: Invalid module data\n");
+        serial_puts("Error: Invalid module data (NULL or too small)\n");
         return KMOD_ERR_INVALID;
     }
     
@@ -720,28 +779,55 @@ int kmodule_load_v2(const void* data, size_t len) {
     
     // Validate magic
     if (hdr->magic != AKM_MAGIC_V2) {
-        serial_puts("Error: Invalid v2 module magic\n");
+        serial_puts("Error: Invalid v2 module magic (expected 0x324D4B41, got 0x");
+        char hex[9];
+        for (int i = 7; i >= 0; i--) {
+            int nibble = (hdr->magic >> (i * 4)) & 0xF;
+            hex[7-i] = nibble < 10 ? '0' + nibble : 'A' + nibble - 10;
+        }
+        hex[8] = '\0';
+        serial_puts(hex);
+        serial_puts(")\n");
         return KMOD_ERR_INVALID;
     }
     
     // Check format version
     if (hdr->format_version < 2) {
         serial_puts("Error: Unsupported format version\n");
-        return KMOD_ERR_INVALID;
+        return KMOD_ERR_VERSION;
     }
     
     // Validate size
     size_t expected_size = sizeof(akm_header_v2_t) + hdr->code_size + 
                           hdr->data_size + hdr->rodata_size + hdr->bss_size;
     if (len < expected_size) {
-        serial_puts("Error: Module data truncated\n");
+        serial_puts("Error: Module data truncated (expected ");
+        char buf[16];
+        itoa(expected_size, buf, 10);
+        serial_puts(buf);
+        serial_puts(" bytes, got ");
+        itoa(len, buf, 10);
+        serial_puts(buf);
+        serial_puts(")\n");
         return KMOD_ERR_INVALID;
     }
     
     // Check kernel version compatibility
     if (kmodule_check_version(hdr->kernel_min_version) != 0) {
-        serial_puts("Error: Module requires newer kernel\n");
+        serial_puts("Error: Module requires newer kernel version\n");
         return KMOD_ERR_VERSION;
+    }
+    
+    // Check if already loaded
+    kmod_v2_entry_t* existing = v2_module_list;
+    while (existing) {
+        if (strcmp(existing->base.name, hdr->name) == 0) {
+            serial_puts("Error: Module '");
+            serial_puts(hdr->name);
+            serial_puts("' already loaded\n");
+            return KMOD_ERR_LOADED;
+        }
+        existing = existing->next;
     }
     
     serial_puts("Loading v2 module: ");
@@ -888,6 +974,37 @@ int kmodule_load_v2(const void* data, size_t len) {
     return 0;
 }
 
+// Cleanup all resources owned by a module (called during unload)
+static void cleanup_module_resources(kmod_ctx_t* ctx, akm_vm_t* vm) {
+    if (!ctx) return;
+    
+    // Cleanup timers
+    for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
+        if (module_timers[i].active && module_timers[i].owner == ctx) {
+            module_timers[i].active = 0;
+        }
+    }
+    
+    // Cleanup IRQs
+    for (int i = 0; i < module_irq_count; ) {
+        if (module_irqs[i].owner == ctx) {
+            // Shift remaining entries
+            for (int j = i; j < module_irq_count - 1; j++) {
+                module_irqs[j] = module_irqs[j + 1];
+            }
+            module_irq_count--;
+        } else {
+            i++;
+        }
+    }
+    
+    // Cleanup VM registry and commands
+    if (vm) {
+        akm_vm_cleanup_registry(vm);
+        unregister_module_commands(vm);
+    }
+}
+
 /**
  * Unload a v2 module by name
  */
@@ -902,14 +1019,21 @@ int kmodule_unload_v2(const char* name) {
             // Found it
             current->base.state = MODULE_UNLOADING;
             
+            serial_puts("Cleaning up module resources for '");
+            serial_puts(name);
+            serial_puts("'...\n");
+            
+            // Cleanup all module resources first
+            cleanup_module_resources(&current->context, current->vm);
+            
             // Call cleanup - handle bytecode vs native
             if (current->is_bytecode && current->vm) {
-                // Cleanup VM registry first
-                akm_vm_cleanup_registry(current->vm);
                 // Execute cleanup via VM
+                serial_puts("Executing bytecode cleanup...\n");
                 akm_vm_execute(current->vm, current->header_v2.cleanup_offset);
             } else if (current->base.cleanup) {
                 // For v2 native, cleanup takes context
+                serial_puts("Calling native cleanup...\n");
                 kmod_exit_fn v2_exit = (kmod_exit_fn)current->base.cleanup;
                 v2_exit(&current->context);
             }

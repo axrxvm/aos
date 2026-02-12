@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/akm_vm.c
+ * src/kernel/akm_vm.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.7
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -17,6 +17,7 @@
 #include <akm_vm.h>
 #include <kmodule_api.h>
 #include <string.h>
+#include <stdlib.h>
 #include <serial.h>
 #include <vga.h>
 
@@ -174,6 +175,27 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
     if (argc > 8) argc = 8;
     for (int i = argc - 1; i >= 0; i--) {
         args[i] = akm_vm_pop(vm);
+    }
+    
+    /* Debug: log API arguments for key APIs */
+    if (api_id == AKM_API_ITOA || api_id == AKM_API_GET_KERNEL_VER) {
+        serial_puts("[VM API] id=");
+        char tmp[16];
+        itoa(api_id, tmp, 10);
+        serial_puts(tmp);
+        serial_puts(" argc=");
+        itoa(argc, tmp, 10);
+        serial_puts(tmp);
+        if (argc > 0) {
+            serial_puts(" arg0=");
+            itoa(args[0], tmp, 10);
+            serial_puts(tmp);
+            serial_puts(" (0x");
+            itoa(args[0], tmp, 16);
+            serial_puts(tmp);
+            serial_puts(")");
+        }
+        serial_puts("\n");
     }
     
     int32_t result = 0;
@@ -596,7 +618,16 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
             break;
             
         case AKM_API_GET_KERNEL_VER:
-            if (ctx->get_kernel_version) result = (int32_t)ctx->get_kernel_version(ctx);
+            if (ctx->get_kernel_version) {
+                result = (int32_t)ctx->get_kernel_version(ctx);
+                char dbg[64];
+                strcpy(dbg, "[VM] getKernelVersion() -> 0x");
+                char tmp[16];
+                itoa(result, tmp, 16);
+                strcat(dbg, tmp);
+                serial_puts(dbg);
+                serial_puts("\n");
+            }
             break;
             
         /* IPC (57-60) */
@@ -683,6 +714,90 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
             }
             break;
             
+        /* STRING OPERATIONS (68-70) */
+        case AKM_API_STRCAT:
+            {
+                /* Concatenate two strings: strcat(str1_offset, str2_offset) -> new string offset */
+                const char* str1 = akm_vm_get_string(vm, args[0]);
+                const char* str2 = akm_vm_get_string(vm, args[1]);
+                serial_puts("[VM] strcat(0x");
+                char tmp[16];
+                itoa(args[0], tmp, 16);
+                serial_puts(tmp);
+                serial_puts(", 0x");
+                itoa(args[1], tmp, 16);
+                serial_puts(tmp);
+                serial_puts(") str1=");
+                serial_puts(str1 ? str1 : "NULL");
+                serial_puts(" str2=");
+                serial_puts(str2 ? str2 : "NULL");
+                serial_puts("\n");
+                if (str1 && str2 && ctx->malloc) {
+                    size_t len1 = strlen(str1);
+                    size_t len2 = strlen(str2);
+                    char* newstr = (char*)ctx->malloc(ctx, len1 + len2 + 1);
+                    if (newstr) {
+                        strcpy(newstr, str1);
+                        strcat(newstr, str2);
+                        result = (int32_t)(uintptr_t)newstr;
+                        serial_puts("[VM] strcat result: ");
+                        serial_puts(newstr);
+                        serial_puts("\n");
+                    } else {
+                        result = 0;
+                        serial_puts("[VM] strcat: malloc failed\n");
+                    }
+                } else {
+                    result = 0;
+                    serial_puts("[VM] strcat: null input or no malloc\n");
+                }
+            }
+            break;
+            
+        case AKM_API_ITOA:
+            {
+                /* Convert integer to string: itoa(value) -> string pointer */
+                if (ctx->malloc) {
+                    char* buf = (char*)ctx->malloc(ctx, 32);
+                    if (buf) {
+                        itoa(args[0], buf, 10);
+                        result = (int32_t)(uintptr_t)buf;
+                        /* Debug: log what we converted */
+                        char dbg[64];
+                        strcpy(dbg, "[VM] itoa(");
+                        char tmp[16];
+                        itoa(args[0], tmp, 10);
+                        strcat(dbg, tmp);
+                        strcat(dbg, ") -> 0x");
+                        itoa((uint32_t)buf, tmp, 16);
+                        strcat(dbg, tmp);
+                        strcat(dbg, ": ");
+                        strcat(dbg, buf);
+                        serial_puts(dbg);
+                        serial_puts("\n");
+                    } else {
+                        result = 0;
+                        serial_puts("[VM] itoa: malloc failed\n");
+                    }
+                } else {
+                    result = 0;
+                    serial_puts("[VM] itoa: no malloc in ctx\n");
+                }
+            }
+            break;
+            
+        case AKM_API_STRLEN:
+            {
+                /* Get string length: strlen(str_offset) -> length */
+                const char* str = akm_vm_get_string(vm, args[0]);
+                if (str) {
+                    result = (int32_t)strlen(str);
+                } else {
+                    result = 0;
+                }
+            }
+            break;
+            
         default:
             /* Unknown API - just return 0, don't crash */
             result = 0;
@@ -734,6 +849,23 @@ void akm_vm_reset(akm_vm_t* vm) {
 
 const char* akm_vm_get_string(akm_vm_t* vm, uint32_t offset) {
     if (!vm) return NULL;
+    
+    /* Check if this is a direct pointer (heap address) vs string table offset
+     * Heap addresses are typically >= 0x100000, string table offsets are small
+     */
+    if (offset >= 0x100000) {
+        /* Looks like a direct pointer - validate it's a reasonable address */
+        const char* ptr = (const char*)(uintptr_t)offset;
+        /* Basic sanity check - ensure first byte is readable (not perfect but helps) */
+        if (ptr && *ptr != '\0') {
+            return ptr;
+        }
+        /* If first byte is null terminator, it's an empty string but still valid */
+        if (ptr) return ptr;
+        return NULL;
+    }
+    
+    /* String table offset path */
     if (!vm->strtab) return NULL;
     if (offset >= vm->strtab_size) return NULL;
     
@@ -807,6 +939,11 @@ int akm_vm_step(akm_vm_t* vm) {
         case AKM_OP_LOAD_LOCAL:
             idx = read_u8(vm);
             if (idx < AKM_VM_LOCALS_MAX) {
+                serial_puts("[VM] LOAD_LOCAL[");
+                serial_put_uint32(idx);
+                serial_puts("] = 0x");
+                serial_put_uint32(vm->locals[idx]);
+                serial_puts("\n");
                 akm_vm_push(vm, vm->locals[idx]);
             } else {
                 akm_vm_push(vm, 0);
@@ -816,6 +953,11 @@ int akm_vm_step(akm_vm_t* vm) {
         case AKM_OP_STORE_LOCAL:
             idx = read_u8(vm);
             a = akm_vm_pop(vm);
+            serial_puts("[VM] STORE_LOCAL[");
+            serial_put_uint32(idx);
+            serial_puts("] = 0x");
+            serial_put_uint32(a);
+            serial_puts("\n");
             if (idx < AKM_VM_LOCALS_MAX) {
                 vm->locals[idx] = a;
             }

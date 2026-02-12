@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/kmodule.c
+ * src/kernel/kmodule.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.7
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -67,7 +67,10 @@ kmodule_t* kmodule_find(const char* name) {
 }
 
 int kmodule_load(const char* path) {
-    if (!path) return -1;
+    if (!path) {
+        serial_puts("Error: NULL path provided to kmodule_load\n");
+        return -1;
+    }
     
     serial_puts("Loading kernel module: ");
     serial_puts(path);
@@ -76,7 +79,9 @@ int kmodule_load(const char* path) {
     // Open module file
     int fd = sys_open(path, O_RDONLY);
     if (fd < 0) {
-        serial_puts("Error: Failed to open module file\n");
+        serial_puts("Error: Failed to open module file '");
+        serial_puts(path);
+        serial_puts("'\n");
         return -1;
     }
     

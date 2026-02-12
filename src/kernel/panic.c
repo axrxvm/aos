@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/panic.c
+ * src/kernel/panic.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.8
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 

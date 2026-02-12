@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./src/kernel/kernel.c
+ * src/kernel/kernel.c
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.8
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -32,11 +32,10 @@
 #include <stdbool.h>
 #include <string.h>    // For strcmp(), strncmp(), memset()
 #include <stdlib.h>    // For itoa()
-#include <command.h>   // For command system
 #include <version.h>   // For version constants
 #include <user.h>      // For user management
-#include <shell.h>     // For login shell
 #include <fs_layout.h> // For filesystem layout
+#include <userspace_init.h> // For userspace initialization
 #include <process.h>   // For process management
 #include <syscall.h>   // For system calls
 #include <ipc.h>       // For inter-process communication
@@ -79,18 +78,6 @@ void kprint(const char *str) {
 uint32_t total_memory_kb = 0;
 int unformatted_disk_detected = 0;  // Flag for unformatted disk detection
 int simplefs_mounted = 0;  // Flag to track if SimpleFS was successfully mounted
-
-// Helper function to display shell prompt with current directory
-void display_prompt(void) {
-    vga_set_color(0x0A); // Light green
-    vga_puts("aOS:");
-    vga_set_color(0x0B); // Cyan
-    const char* cwd = vfs_getcwd();
-    vga_puts(cwd ? cwd : "/");
-    vga_set_color(0x0A); // Light green
-    vga_puts("> ");
-    vga_set_color(0x0F); // White
-}
 
 void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     // Initialize Kernel Recovery Mode FIRST - before any other subsystems
@@ -163,9 +150,6 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     vga_set_color(0x0F); // Back to white
     
     serial_puts("\n=== aOS Boot Sequence ===\n");
-
-    // Initialize command system
-    init_commands();
     
     // Check bit 0 for mem_lower/mem_upper validity
     if (multiboot_info && (multiboot_info->flags & (1 << 0))) {
@@ -381,11 +365,6 @@ mount_done:
         serial_puts("Running in ISO mode, user database will not persist\n");
     }
     
-    // Initialize shell
-    serial_puts("Initializing shell...\n");
-    shell_init();
-    serial_puts("Shell initialized.\n");
-    
     // Initialize file permission system (v0.7.3)
     serial_puts("Initializing file permissions...\n");
     fileperm_init();
@@ -455,25 +434,23 @@ mount_done:
     serial_puts("Starting multi-user services...\n");
     init_set_runlevel(RUNLEVEL_MULTI);
     serial_puts("Multi-user mode enabled.\n");
-    while (1) {
-        if (shell_login() == 0) {
-            // Login successful, run shell
-            shell_run();
-            
-            // Save user database if in local mode
-            if (fs_mode == FS_MODE_LOCAL) {
-                serial_puts("Saving user database...\n");
-                user_save_database(USER_DATABASE_PATH);
-            }
-            
-            // User logged out, show login again
-            vga_clear();
-        } else {
-            // Login failed, wait a bit and try again
-            vga_puts("\nLogin failed. Please wait...\n\n");
-            for (volatile int i = 0; i < 100000000; i++);
-        }
-    }
+    
+    // ================================================================
+    // KERNEL INITIALIZATION COMPLETE
+    // Transferring control to userspace
+    // ================================================================
+    serial_puts("\n=== Kernel Initialization Complete ===\n");
+    serial_puts("Kernel is now idle. Launching userspace...\n\n");
+    
+    // Initialize userspace subsystems (command registry, shell, etc.)
+    userspace_init();
+    
+    // Launch userspace shell (TODO: should be a separate process)
+    userspace_run();
+    
+    // Should never reach here
+    serial_puts("ERROR: Userspace returned to kernel! We are doomed to misery\n");
+    panic("Kernel idle loop exited unexpectedly");
     
     // Old shell code (keeping for reference)
     /*

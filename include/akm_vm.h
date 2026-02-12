@@ -1,9 +1,9 @@
 /*
  * === AOS HEADER BEGIN ===
- * ./include/akm_vm.h
+ * include/akm_vm.h
  * Copyright (c) 2024 - 2026 Aarav Mehta and aOS Contributors
  * Licensed under CC BY-NC 4.0
- * aOS Version : 0.8.7
+ * aOS Version : 0.9.0
  * === AOS HEADER END ===
  */
 
@@ -155,6 +155,9 @@
 #define AKM_API_CHECK_PERM      65
 #define AKM_API_GET_ARGS        66
 #define AKM_API_PRINT           67
+#define AKM_API_STRCAT          68
+#define AKM_API_ITOA            69
+#define AKM_API_STRLEN          70
 
 //                           VM STATE
 
