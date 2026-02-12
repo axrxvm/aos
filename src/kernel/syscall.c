@@ -23,6 +23,7 @@
 #include <version.h>
 #include <crypto/sha256.h>
 #include <fs_layout.h>
+#include <dev/mouse.h>
 
 // Forward declaration for process functions
 extern void process_exit(int status);
@@ -152,6 +153,19 @@ static int syscall_getchar(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint3
     // path (we're inside the INT 0x80 handler). Polling with cli is safe
     // since the keyboard controller buffers scancodes for us.
     while (1) {
+        // Poll mouse for scroll wheel events while waiting for keyboard input
+        mouse_poll();
+        if (mouse_has_data()) {
+            mouse_packet_t* packet = mouse_get_packet();
+            if (packet && packet->z_movement != 0) {
+                if (packet->z_movement > 0) {
+                    vga_scroll_up_view();
+                } else {
+                    vga_scroll_down();
+                }
+            }
+        }
+        
         uint8_t scancode = keyboard_get_scancode();
         if (scancode != 0) {
             char ch = scancode_to_char(scancode);
@@ -398,6 +412,33 @@ static int syscall_vga_scroll_to_bottom(uint32_t a, uint32_t b, uint32_t c, uint
     return 0;
 }
 
+static int syscall_mouse_poll(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+    (void)a; (void)b; (void)c; (void)d; (void)e;
+    mouse_poll();
+    return 0;
+}
+
+static int syscall_mouse_has_data(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+    (void)a; (void)b; (void)c; (void)d; (void)e;
+    return mouse_has_data();
+}
+
+static int syscall_mouse_get_packet(uint32_t packet_ptr, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+    (void)b; (void)c; (void)d; (void)e;
+    mouse_packet_t* user_packet = (mouse_packet_t*)packet_ptr;
+    if (!user_packet) return -1;
+    
+    mouse_packet_t* kernel_packet = mouse_get_packet();
+    if (!kernel_packet) return 0;
+    
+    // Copy packet data to userspace
+    user_packet->buttons = kernel_packet->buttons;
+    user_packet->x_movement = kernel_packet->x_movement;
+    user_packet->y_movement = kernel_packet->y_movement;
+    user_packet->z_movement = kernel_packet->z_movement;
+    return 1;
+}
+
 // System call table — indices MUST match SYS_* defines in syscall.h
 static syscall_handler_t syscall_table[SYSCALL_COUNT] = {
     [SYS_EXIT]      = syscall_exit,
@@ -444,6 +485,9 @@ static syscall_handler_t syscall_table[SYSCALL_COUNT] = {
     [SYS_VGA_SCROLL_UP_VIEW] = syscall_vga_scroll_up_view,
     [SYS_VGA_SCROLL_DOWN] = syscall_vga_scroll_down,
     [SYS_VGA_SCROLL_TO_BOTTOM] = syscall_vga_scroll_to_bottom,
+    [SYS_MOUSE_POLL] = syscall_mouse_poll,
+    [SYS_MOUSE_HAS_DATA] = syscall_mouse_has_data,
+    [SYS_MOUSE_GET_PACKET] = syscall_mouse_get_packet,
 };
 
 // System call interrupt handler (INT 0x80)

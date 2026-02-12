@@ -59,8 +59,11 @@
 #define SYS_VGA_SCROLL_UP_VIEW 41
 #define SYS_VGA_SCROLL_DOWN 42
 #define SYS_VGA_SCROLL_TO_BOTTOM 43
+#define SYS_MOUSE_POLL 44
+#define SYS_MOUSE_HAS_DATA 45
+#define SYS_MOUSE_GET_PACKET 46
 
-#define SYSCALL_COUNT   44
+#define SYSCALL_COUNT   47
 
 // Initialize syscall handler
 void init_syscalls(void);

@@ -48,6 +48,9 @@
 #define SYS_VGA_SCROLL_UP_VIEW 41
 #define SYS_VGA_SCROLL_DOWN 42
 #define SYS_VGA_SCROLL_TO_BOTTOM 43
+#define SYS_MOUSE_POLL 44
+#define SYS_MOUSE_HAS_DATA 45
+#define SYS_MOUSE_GET_PACKET 46
 
 /* File operation flags (from vfs.h) */
 #define O_RDONLY    0x0000
@@ -69,6 +72,14 @@
 
 /* User flags (must match kernel include/user.h) */
 #define USER_FLAG_MUST_CHANGE_PASS 0x10
+
+/* Mouse packet structure (must match kernel include/dev/mouse.h) */
+typedef struct {
+    unsigned char buttons;
+    signed char x_movement;
+    signed char y_movement;
+    signed char z_movement;
+} mouse_packet_t;
 
 /*
  * SYSCALL WRAPPERS
@@ -225,6 +236,18 @@ static void u_vga_scroll_down(void) {
 
 static void u_vga_scroll_to_bottom(void) {
     syscall0(SYS_VGA_SCROLL_TO_BOTTOM);
+}
+
+static void u_mouse_poll(void) {
+    syscall0(SYS_MOUSE_POLL);
+}
+
+static int u_mouse_has_data(void) {
+    return syscall0(SYS_MOUSE_HAS_DATA);
+}
+
+static int u_mouse_get_packet(mouse_packet_t* packet) {
+    return syscall1(SYS_MOUSE_GET_PACKET, (int)packet);
 }
 /* File operations */
 static int u_open(const char* path, int flags) {
@@ -494,6 +517,20 @@ static int read_input_ex(char* buf, int maxlen) {
     u_vga_set_cursor_style(CURSOR_UNDERLINE);
 
     while (pos < maxlen - 1) {
+        /* Poll mouse for scroll wheel events */
+        u_mouse_poll();
+        if (u_mouse_has_data()) {
+            mouse_packet_t packet;
+            if (u_mouse_get_packet(&packet)) {
+                if (packet.z_movement > 0) {
+                    u_vga_scroll_up_view();
+                } else if (packet.z_movement < 0) {
+                    u_vga_scroll_down();
+                }
+            }
+            continue; /* Check for more input */
+        }
+        
         int ch = u_getchar();
         char c = (char)(ch & 0xFF);
         int ctrl = (ch >> 8) & 1;
