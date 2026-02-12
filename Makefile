@@ -145,12 +145,12 @@ run-debug: iso
 	@echo "Serial output will be saved to serial.log"
 	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -serial stdio -d guest_errors,unimp | tee serial.log
 
-# Run with attached storage device (creates 50MB disk image if not exists)
+# Run with attached storage device (creates 1000MB disk image if not exists)
 run-s: iso
 	@echo "Checking for disk image..."
 	@if [ ! -f $(DISK_IMG) ]; then \
-		echo "Creating 50MB disk image at $(DISK_IMG)..."; \
-		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=50 2>/dev/null; \
+		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
+		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=100 2>/dev/null; \
 		echo "Disk image created."; \
 	else \
 		echo "Using existing disk image at $(DISK_IMG)"; \
@@ -163,8 +163,8 @@ run-s: iso
 run-sn: iso
 	@echo "Checking for disk image..."
 	@if [ ! -f $(DISK_IMG) ]; then \
-		echo "Creating 50MB disk image at $(DISK_IMG)..."; \
-		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=50 2>/dev/null; \
+		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
+		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=100 2>/dev/null; \
 		echo "Disk image created."; \
 	else \
 		echo "Using existing disk image at $(DISK_IMG)"; \
@@ -186,8 +186,8 @@ clean:
 run-sn-user: iso
 	@echo "Checking for disk image..."
 	@if [ ! -f $(DISK_IMG) ]; then \
-		echo "Creating 50MB disk image at $(DISK_IMG)..."; \
-		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=50 2>/dev/null; \
+		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
+		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=100 2>/dev/null; \
 		echo "Disk image created."; \
 	else \
 		echo "Using existing disk image at $(DISK_IMG)"; \
