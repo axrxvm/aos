@@ -237,8 +237,11 @@ typedef enum {
 
 // CORE INITIALIZATION & MODE SWITCHING
 
+// Forward declaration
+struct multiboot_info;
 
 void vga_init(void);
+void vga_set_multiboot_info(struct multiboot_info* mbi);
 int vga_set_mode(uint16_t mode);
 int vga_get_current_mode(void);
 vga_mode_info_t* vga_get_mode_info(void);
@@ -246,6 +249,8 @@ int vga_detect_vbe(void);
 int vga_get_vbe_info(vbe_info_block_t* info);
 int vga_get_vbe_mode_info(uint16_t mode, vbe_mode_info_t* info);
 void vga_list_available_modes(void);
+int vga_vbe_set_palette(uint16_t first_entry, uint16_t num_entries, const rgb_color_t* palette_data);
+int vga_vbe_get_palette(uint16_t first_entry, uint16_t num_entries, rgb_color_t* palette_data);
 
 
 // TEXT MODE FUNCTIONS

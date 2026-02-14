@@ -125,6 +125,11 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     vga_init(); // Initialize VGA text mode.
     vga_clear();
     
+    // Pass multiboot info to VGA driver for VBE information
+    if (multiboot_info) {
+        vga_set_multiboot_info(multiboot_info);
+    }
+    
     // Center the ASCII art (VGA is 80 columns, art is ~20 chars wide)
     // Calculate starting position for centering
     vga_set_position(8, 30); // Row 8, Column 30 (roughly centered)
