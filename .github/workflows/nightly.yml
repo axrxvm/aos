@@ -10,6 +10,9 @@ jobs:
   nightly-build:
     name: Nightly Build & Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     
     steps:
     - name: Checkout latest code
