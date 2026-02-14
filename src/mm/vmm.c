@@ -181,12 +181,8 @@ static void slab_free(slab_cache_t *cache, void *ptr) {
     
     // Check for double-free
     if (obj->magic_start == GUARD_MAGIC_FREED) {
-        serial_puts("WARNING: Double-free detected in slab allocator at 0x");
-        char buf[16];
-        itoa((uint32_t)ptr, buf, 16);
-        serial_puts(buf);
-        serial_puts(" - ignoring free (memory not returned to pool)\n");
-        // Don't panic during boot - just skip the free
+        // Double-free detected - silently ignore to prevent corruption
+        // Memory not returned to pool (already freed)
         return;
     }
     
