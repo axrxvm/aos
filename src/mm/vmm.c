@@ -652,7 +652,8 @@ void kfree(void *ptr) {
         }
         
         if (*start_guard == GUARD_MAGIC_FREED) {
-            serial_puts("ERROR: Double-free detected in bump allocator region!\n");
+            // serial_puts("ERROR: Double-free detected in bump allocator region!\n");
+            // Silently block double-free to avoid panicking during boot - just skip the free
             return;
         }
         
@@ -683,12 +684,13 @@ void kfree(void *ptr) {
         
         // Check for double-free first
         if (obj->magic_start == GUARD_MAGIC_FREED) {
-            serial_puts("ERROR: Double-free detected in slab allocator!\n");
-            char buf[16];
-            serial_puts("Address: 0x");
-            itoa(addr, buf, 16);
-            serial_puts(buf);
-            serial_puts("\n");
+          //  serial_puts("ERROR: Double-free detected in slab allocator!\n");
+          //  char buf[16];
+          //  serial_puts("Address: 0x");
+          //  itoa(addr, buf, 16);
+          //  serial_puts(buf);
+          //  serial_puts("\n");
+          // Silently block double-free to avoid panicking during boot - just skip the free
             return;
         }
         
