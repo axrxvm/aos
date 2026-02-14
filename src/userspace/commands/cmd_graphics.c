@@ -17,6 +17,13 @@
 
 extern void kprint(const char *str);
 
+// Simple pseudo-random number generator
+static unsigned int prng_seed = 1;
+static int simple_rand(void) {
+    prng_seed = (prng_seed * 1103515245 + 12345) & 0x7fffffff;
+    return prng_seed;
+}
+
 // List available graphics modes
 static void cmd_listmodes(const char* args) {
     (void)args;
@@ -368,6 +375,272 @@ static void cmd_gfxinfo(const char* args) {
     kprint(line);
 }
 
+// Bouncing ball animation
+static void cmd_bouncy(const char* args) {
+    (void)args;
+    
+    kprint("=== Bouncing Ball Demo ===");
+    kprint("Switching to 320x200 mode...");
+    
+    if (!vga_set_mode(VGA_MODE_320x200x256)) {
+        kprint("Error: Failed to switch to graphics mode");
+        return;
+    }
+    
+    serial_puts("Bouncing ball animation started. Press 'q' to quit.\n");
+    
+    // Ball properties - use fixed-point (multiply by 16 for sub-pixel precision)
+    int ball_x = 160 << 4;  // 160 * 16 = 2560
+    int ball_y = 100 << 4;  // 100 * 16 = 1600
+    int vel_x = 6;          // 0.375 pixels per frame (6/16)
+    int vel_y = 5;          // 0.3125 pixels per frame (5/16)
+    int radius = 8;
+    int color = 12;  // Yellow
+    
+    // Clear to black
+    for (uint16_t y = 0; y < 200; y++) {
+        for (uint16_t x = 0; x < 320; x++) {
+            vga_plot_pixel(x, y, 0);
+        }
+    }
+    
+    // Clear keyboard
+    for (int i = 0; i < 10; i++) {
+        keyboard_get_scancode();
+    }
+    
+    int running = 1;
+    int frame = 0;
+    int last_draw_x = 160, last_draw_y = 100;
+    
+    while (running) {
+        // Get current integer position from fixed-point
+        int draw_x = ball_x >> 4;
+        int draw_y = ball_y >> 4;
+        
+        // Only redraw if position changed
+        if (draw_x != last_draw_x || draw_y != last_draw_y) {
+            // Clear previous ball
+            vga_fill_circle(last_draw_x, last_draw_y, radius, 0);
+        }
+        
+        // Update position with fixed-point arithmetic
+        ball_x += vel_x;
+        ball_y += vel_y;
+        
+        // Bounce off walls (using fixed-point boundary checks)
+        int left_bound = radius << 4;
+        int right_bound = (320 - radius) << 4;
+        int top_bound = radius << 4;
+        int bottom_bound = (200 - radius) << 4;
+        
+        if (ball_x <= left_bound || ball_x >= right_bound) {
+            vel_x = -vel_x;
+            ball_x += vel_x;  // Adjust to prevent getting stuck
+        }
+        if (ball_y <= top_bound || ball_y >= bottom_bound) {
+            vel_y = -vel_y;
+            ball_y += vel_y;  // Adjust to prevent getting stuck
+        }
+        
+        // Change color occasionally
+        if (frame % 100 == 0) {
+            color = (color + 1) % 16;
+            if (color == 0) color = 1;
+        }
+        
+        // Update integer position for next frame
+        draw_x = ball_x >> 4;
+        draw_y = ball_y >> 4;
+        
+        // Draw new ball
+        vga_fill_circle(draw_x, draw_y, radius, color);
+        last_draw_x = draw_x;
+        last_draw_y = draw_y;
+        
+        // Check for 'q' key
+        uint8_t scan = keyboard_get_scancode();
+        if (scan == 0x10) {  // 'q' key
+            running = 0;
+        }
+        
+        // Shorter delay for smoother animation
+        for (volatile int i = 0; i < 25000; i++) { }
+        frame++;
+    }
+    
+    // Return to text mode
+    if (vga_set_mode(0x03)) {
+        vga_init();
+        vga_clear();
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        kprint("Bouncing ball demo ended!");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    }
+}
+
+// Starfield screensaver effect
+static void cmd_starfield(const char* args) {
+    (void)args;
+    
+    kprint("=== Starfield Screensaver ===");
+    kprint("Switching to 320x200 mode...");
+    
+    if (!vga_set_mode(VGA_MODE_320x200x256)) {
+        kprint("Error: Failed to switch to graphics mode");
+        return;
+    }
+    
+    serial_puts("Starfield effect. Press 'q' to quit.\n");
+    
+    // Clear to black
+    for (uint16_t y = 0; y < 200; y++) {
+        for (uint16_t x = 0; x < 320; x++) {
+            vga_plot_pixel(x, y, 0);
+        }
+    }
+    
+    // Star data
+    typedef struct {
+        int x, y;
+        int z;  // Depth
+    } star_t;
+    
+    star_t stars[50];
+    
+    // Initialize stars
+    for (int i = 0; i < 50; i++) {
+        stars[i].x = (simple_rand() % 320);
+        stars[i].y = (simple_rand() % 200);
+        stars[i].z = simple_rand() % 256;
+    }
+    
+    // Clear keyboard
+    for (int i = 0; i < 10; i++) {
+        keyboard_get_scancode();
+    }
+    
+    int running = 1;
+    int frame = 0;
+    
+    while (running) {
+        // Draw and update stars
+        for (int i = 0; i < 50; i++) {
+            // Clear old star
+            if (stars[i].x >= 0 && stars[i].x < 320 && 
+                stars[i].y >= 0 && stars[i].y < 200) {
+                vga_plot_pixel(stars[i].x, stars[i].y, 0);
+            }
+            
+            // Move star closer
+            stars[i].z -= 5;
+            
+            if (stars[i].z <= 0) {
+                // Reset star
+                stars[i].x = 160 + (simple_rand() % 40 - 20);
+                stars[i].y = 100 + (simple_rand() % 40 - 20);
+                stars[i].z = 256;
+            }
+            
+            // Project to screen
+            int screen_x = 160 + (stars[i].x - 160) * 256 / (stars[i].z + 1);
+            int screen_y = 100 + (stars[i].y - 100) * 256 / (stars[i].z + 1);
+            
+            // Draw star if on screen
+            if (screen_x >= 0 && screen_x < 320 && 
+                screen_y >= 0 && screen_y < 200) {
+                int brightness = 15 * stars[i].z / 256;
+                if (brightness < 2) brightness = 2;
+                vga_plot_pixel(screen_x, screen_y, brightness);
+            }
+        }
+        
+        // Check for 'q' key
+        uint8_t scan = keyboard_get_scancode();
+        if (scan == 0x10) {
+            running = 0;
+        }
+        
+        // Delay
+        for (volatile int i = 0; i < 30000; i++) { }
+        frame++;
+    }
+    
+    // Return to text mode
+    if (vga_set_mode(0x03)) {
+        vga_init();
+        vga_clear();
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        kprint("Starfield demo ended!");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    }
+}
+
+// Plasma effect
+static void cmd_plasma(const char* args) {
+    (void)args;
+    
+    kprint("=== Plasma Effect ===");
+    kprint("Switching to 320x200 mode...");
+    
+    if (!vga_set_mode(VGA_MODE_320x200x256)) {
+        kprint("Error: Failed to switch to graphics mode");
+        return;
+    }
+    
+    serial_puts("Plasma animation. Press 'q' to quit.\n");
+    
+    // Clear keyboard
+    for (int i = 0; i < 10; i++) {
+        keyboard_get_scancode();
+    }
+    
+    int running = 1;
+    int frame = 0;
+    
+    while (running) {
+        // Draw plasma using sine waves
+        for (uint16_t y = 0; y < 200; y++) {
+            for (uint16_t x = 0; x < 320; x++) {
+                // Create plasma pattern using mathematical functions
+                int value = 0;
+                
+                // Multiple sine waves at different frequencies
+                value += (128 + 127 * 1) / 2;  // Bias
+                value += (64 * (x + frame) / 320);
+                value += (64 * (y + frame) / 200);
+                value += (32 * (x - y + frame) / 320);
+                
+                // Wrap and quantize to 256 colors
+                int color = (value / 4) % 256;
+                if (color < 0) color = 0;
+                if (color > 255) color = 255;
+                
+                vga_plot_pixel(x, y, color);
+            }
+        }
+        
+        // Check for 'q' key
+        uint8_t scan = keyboard_get_scancode();
+        if (scan == 0x10) {
+            running = 0;
+        }
+        
+        // Delay
+        for (volatile int i = 0; i < 50000; i++) { }
+        frame += 2;
+    }
+    
+    // Return to text mode
+    if (vga_set_mode(0x03)) {
+        vga_init();
+        vga_clear();
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        kprint("Plasma demo ended!");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    }
+}
+
 // Register graphics commands
 void cmd_module_graphics_register(void) {
     command_register_with_category(
@@ -416,5 +689,29 @@ void cmd_module_graphics_register(void) {
         "Display VGA color gradient in text mode",
         "Graphics",
         cmd_gradient
+    );
+    
+    command_register_with_category(
+        "bouncy",
+        "",
+        "Bouncing ball animation",
+        "Graphics",
+        cmd_bouncy
+    );
+    
+    command_register_with_category(
+        "starfield",
+        "",
+        "3D starfield screensaver effect",
+        "Graphics",
+        cmd_starfield
+    );
+    
+    command_register_with_category(
+        "plasma",
+        "",
+        "Animated plasma effect",
+        "Graphics",
+        cmd_plasma
     );
 }
