@@ -40,9 +40,11 @@ void init_paging(void) {
     }
     serial_puts("Kernel page directory created.\n");
     
-    // Identity map the first 8MB (0x0 - 0x800000) for kernel, data, and heap
-    serial_puts("Identity mapping first 8MB...\n");
-    for (uint32_t addr = 0; addr < 0x800000; addr += PAGE_SIZE) {
+    // Identity map the first 32MB (0x0 - 0x2000000) for kernel, data, heap, and DMA
+    // This provides ample space for early allocations including slab caches
+    // Covers both DMA zone (0-16MB) and part of Normal zone (16-32MB)
+    serial_puts("Identity mapping first 32MB...\n");
+    for (uint32_t addr = 0; addr < 0x2000000; addr += PAGE_SIZE) {
         map_page(kernel_directory, addr, addr, PAGE_PRESENT | PAGE_WRITE);
     }
     serial_puts("Identity mapping complete.\n");
@@ -155,29 +157,39 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
     // Critical: Validate ALL inputs before proceeding
     if (!dir) {
         serial_puts("CRITICAL: map_page called with NULL directory\n");
-        asm volatile("cli; hlt");
-        while(1);
+        return; // Changed from halt to return for robustness
     }
     
     if (!dir->cpu_dir) {
         serial_puts("CRITICAL: map_page - cpu_dir is NULL\n");
-        asm volatile("cli; hlt");
-        while(1);
+        return;
     }
     
     if (!dir->tables_physical) {
         serial_puts("CRITICAL: map_page - tables_physical is NULL\n");
-        asm volatile("cli; hlt");
-        while(1);
+        return;
     }
     
     // Align addresses to page boundaries (must be 4KB aligned)
+    uint32_t orig_virt = virtual_addr;
+    uint32_t orig_phys = physical_addr;
     virtual_addr = PAGE_ALIGN_DOWN(virtual_addr);
     physical_addr = PAGE_ALIGN_DOWN(physical_addr);
+    
+    // Warn if addresses were not aligned
+    if (orig_virt != virtual_addr || orig_phys != physical_addr) {
+        serial_puts("WARNING: map_page - addresses were not page-aligned, auto-aligned\n");
+    }
     
     // Validate addresses are within reasonable range
     if (physical_addr == 0 && virtual_addr != 0) {
         serial_puts("WARNING: Mapping to physical address 0 (except for null page)\n");
+    }
+    
+    // Additional validation: Check for obviously invalid addresses
+    if (physical_addr > 0x100000000ULL) {
+        serial_puts("ERROR: map_page - physical address out of range\n");
+        return;
     }
     
     // Get page directory and page table indices
@@ -187,8 +199,15 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
     // Validate indices are within bounds
     if (dir_index >= TABLES_PER_DIR || table_index >= PAGES_PER_TABLE) {
         serial_puts("CRITICAL: map_page - index out of bounds\n");
-        asm volatile("cli; hlt");
-        while(1);
+        return;
+    }
+    
+    // Check if we're remapping an already-mapped page
+    if (dir->tables_physical[dir_index]) {
+        page_table_t *existing_table = dir->tables_physical[dir_index];
+        if (existing_table->pages[table_index] & PAGE_PRESENT) {
+            serial_puts("WARNING: map_page - remapping already mapped page\n");
+        }
     }
     
     // Check if page table exists
@@ -197,8 +216,7 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
         page_table_t *table = (page_table_t *)alloc_page();
         if (!table) {
             serial_puts("CRITICAL: map_page - Failed to allocate page table (out of memory)\n");
-            asm volatile("cli; hlt");
-            while(1);
+            return;
         }
         
         // CRITICAL: Zero the entire table before use
@@ -217,8 +235,7 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
         // Validate the table address is reasonable
         if (table_phys == 0) {
             serial_puts("CRITICAL: map_page - Allocated table has address 0\n");
-            asm volatile("cli; hlt");
-            while(1);
+            return;
         }
         
         // Page directory entry needs USER flag if any page in the table needs it
@@ -234,8 +251,7 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
     page_table_t *table = dir->tables_physical[dir_index];
     if (!table) {
         serial_puts("CRITICAL: map_page - Page table is NULL after allocation\n");
-        asm volatile("cli; hlt");
-        while(1);
+        return;
     }
     
     // Set page table entry with full flags
@@ -266,17 +282,26 @@ void unmap_page(page_directory_t *dir, uint32_t virtual_addr) {
     
     // Check if page table exists
     if (!dir->tables_physical[dir_index]) {
-        return; // Page not mapped
+        // Page was never mapped, this is fine
+        return;
     }
     
-    // Get the page table and clear the entry
+    // Get the page table and check if page is mapped
     page_table_t *table = dir->tables_physical[dir_index];
+    if (!(table->pages[table_index] & PAGE_PRESENT)) {
+        serial_puts("WARNING: unmap_page - attempted to unmap non-present page\n");
+    }
+    
+    // Clear the entry
     table->pages[table_index] = 0;
     
     // Flush TLB
     if (dir == current_directory) {
         flush_tlb_single(virtual_addr);
     }
+    
+    // Optional: Check if entire page table is empty and could be freed
+    // This would reduce memory usage but adds overhead
 }
 
 uint32_t get_physical_address(page_directory_t *dir, uint32_t virtual_addr) {

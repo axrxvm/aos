@@ -10,18 +10,46 @@
 
 // Implementations for string functions
 #include <stddef.h> // For size_t
+#include <stdint.h> // For SIZE_MAX
 
-// Minimal implementation of strcmp
+// Define SIZE_MAX if not already defined
+#ifndef SIZE_MAX
+#define SIZE_MAX ((size_t)-1)
+#endif
+
+// Maximum string length to prevent infinite loops (1MB)
+#define MAX_STRING_LENGTH (1024 * 1024)
+
+// Minimal implementation of strcmp with null checks
 int strcmp(const char *s1, const char *s2) {
-    while (*s1 != '\0' && *s1 == *s2) {
+    // Null pointer protection
+    if (!s1 || !s2) {
+        if (s1 == s2) return 0;
+        return s1 ? 1 : -1;
+    }
+    
+    // Prevent infinite loops on corrupted strings
+    size_t count = 0;
+    while (*s1 != '\0' && *s1 == *s2 && count < MAX_STRING_LENGTH) {
         s1++;
         s2++;
+        count++;
     }
     return (*(unsigned char *)s1) - (*(unsigned char *)s2);
 }
 
-// Minimal implementation of strncmp
+// Minimal implementation of strncmp with null checks
 int strncmp(const char *s1, const char *s2, size_t n) {
+    // Null pointer protection
+    if (!s1 || !s2) {
+        if (s1 == s2) return 0;
+        return s1 ? 1 : -1;
+    }
+    
+    // Bounds check
+    if (n == 0) return 0;
+    if (n > MAX_STRING_LENGTH) n = MAX_STRING_LENGTH;
+    
     for (size_t i = 0; i < n; i++) {
         if (s1[i] != s2[i] || s1[i] == '\0' || s2[i] == '\0') {
             return (unsigned char)s1[i] - (unsigned char)s2[i];
@@ -30,26 +58,48 @@ int strncmp(const char *s1, const char *s2, size_t n) {
     return 0;
 }
 
-// Calculate length of string
+// Calculate length of string with safety checks
 size_t strlen(const char *s) {
+    // Null pointer protection
+    if (!s) return 0;
+    
     size_t len = 0;
-    while (s[len] != '\0') {
+    // Prevent infinite loops on corrupted strings
+    while (s[len] != '\0' && len < MAX_STRING_LENGTH) {
         len++;
     }
     return len;
 }
 
-// Copy string from src to dest
+// Copy string from src to dest with safety checks
 char *strcpy(char *dest, const char *src) {
+    // Null pointer protection
+    if (!dest || !src) return dest;
+    
     char *d = dest;
-    while ((*d++ = *src++) != '\0') {
-        // Copy until null terminator
+    size_t count = 0;
+    // Prevent infinite loops and buffer overflows
+    while ((*d++ = *src++) != '\0' && count < MAX_STRING_LENGTH) {
+        count++;
     }
+    
+    // Ensure null termination even if we hit the limit
+    if (count >= MAX_STRING_LENGTH) {
+        *(d - 1) = '\0';
+    }
+    
     return dest;
 }
 
-// Copy at most n characters from src to dest
+// Copy at most n characters from src to dest with safety checks
 char *strncpy(char *dest, const char *src, size_t n) {
+    // Null pointer protection
+    if (!dest || !src) return dest;
+    
+    // Bounds check
+    if (n == 0) return dest;
+    if (n > MAX_STRING_LENGTH) n = MAX_STRING_LENGTH;
+    
     size_t i;
     for (i = 0; i < n && src[i] != '\0'; i++) {
         dest[i] = src[i];
@@ -60,25 +110,54 @@ char *strncpy(char *dest, const char *src, size_t n) {
     return dest;
 }
 
-// Concatenate src to dest
+// Concatenate src to dest with safety checks
 char *strcat(char *dest, const char *src) {
+    // Null pointer protection
+    if (!dest || !src) return dest;
+    
     char *d = dest;
-    // Find end of dest
-    while (*d != '\0') {
+    size_t count = 0;
+    
+    // Find end of dest (with bounds check)
+    while (*d != '\0' && count < MAX_STRING_LENGTH) {
         d++;
+        count++;
     }
-    // Copy src to end of dest
-    while ((*d++ = *src++) != '\0') {
-        // Copy until null terminator
+    
+    // If we hit the limit, string is corrupted or too long
+    if (count >= MAX_STRING_LENGTH) return dest;
+    
+    // Copy src to end of dest (with bounds check)
+    count = 0;
+    while ((*d++ = *src++) != '\0' && count < MAX_STRING_LENGTH) {
+        count++;
     }
+    
+    // Ensure null termination
+    if (count >= MAX_STRING_LENGTH) {
+        *(d - 1) = '\0';
+    }
+    
     return dest;
 }
 
-// Concatenate at most n characters from src to dest
+// Concatenate at most n characters from src to dest with safety checks
 char *strncat(char *dest, const char *src, size_t n) {
-    size_t dest_len = strlen(dest);
-    size_t i;
+    // Null pointer protection
+    if (!dest || !src) return dest;
     
+    // Bounds check
+    if (n == 0) return dest;
+    if (n > MAX_STRING_LENGTH) n = MAX_STRING_LENGTH;
+    
+    size_t dest_len = strlen(dest);
+    
+    // Check for potential overflow
+    if (dest_len >= MAX_STRING_LENGTH - n) {
+        return dest; // Would overflow, abort
+    }
+    
+    size_t i;
     for (i = 0; i < n && src[i] != '\0'; i++) {
         dest[dest_len + i] = src[i];
     }
@@ -87,48 +166,64 @@ char *strncat(char *dest, const char *src, size_t n) {
     return dest;
 }
 
-// Find first occurrence of character in string
+// Find first occurrence of character in string with safety checks
 char *strchr(const char *s, int c) {
-    while (*s != '\0') {
+    // Null pointer protection
+    if (!s) return NULL;
+    
+    size_t count = 0;
+    while (*s != '\0' && count < MAX_STRING_LENGTH) {
         if (*s == (char)c) {
             return (char *)s;
         }
         s++;
+        count++;
     }
-    if ((char)c == '\0') {
+    if ((char)c == '\0' && count < MAX_STRING_LENGTH) {
         return (char *)s;
     }
     return NULL;
 }
 
-// Find last occurrence of character in string
+// Find last occurrence of character in string with safety checks
 char *strrchr(const char *s, int c) {
+    // Null pointer protection
+    if (!s) return NULL;
+    
     const char *last = NULL;
-    while (*s != '\0') {
+    size_t count = 0;
+    while (*s != '\0' && count < MAX_STRING_LENGTH) {
         if (*s == (char)c) {
             last = s;
         }
         s++;
+        count++;
     }
-    if ((char)c == '\0') {
+    if ((char)c == '\0' && count < MAX_STRING_LENGTH) {
         return (char *)s;
     }
     return (char *)last;
 }
 
-// Find substring in string
+// Find substring in string with safety checks
 char *strstr(const char *haystack, const char *needle) {
+    // Null pointer protection
+    if (!haystack || !needle) return NULL;
+    
     if (!*needle) {
         return (char *)haystack;
     }
     
-    while (*haystack) {
+    size_t outer_count = 0;
+    while (*haystack && outer_count < MAX_STRING_LENGTH) {
         const char *h = haystack;
         const char *n = needle;
+        size_t inner_count = 0;
         
-        while (*h && *n && *h == *n) {
+        while (*h && *n && *h == *n && inner_count < MAX_STRING_LENGTH) {
             h++;
             n++;
+            inner_count++;
         }
         
         if (!*n) {
@@ -136,6 +231,7 @@ char *strstr(const char *haystack, const char *needle) {
         }
         
         haystack++;
+        outer_count++;
     }
     
     return NULL;
@@ -144,8 +240,18 @@ char *strstr(const char *haystack, const char *needle) {
 // Copy n bytes from src to dest, handling overlapping memory (robust)
 void *memmove(void *dest, const void *src, size_t n) {
     // Null pointer checks
-    if (!dest || !src || n == 0) {
+    if (!dest || !src) {
         return dest;
+    }
+    
+    // Zero-size check
+    if (n == 0) {
+        return dest;
+    }
+    
+    // Bounds check
+    if (n > MAX_STRING_LENGTH) {
+        return dest; // Refuse to copy excessive amounts
     }
     
     unsigned char *d = (unsigned char *)dest;
@@ -156,8 +262,9 @@ void *memmove(void *dest, const void *src, size_t n) {
         return dest;
     }
     
-    if (d < s) {
-        // Copy forward (no overlap or dest is before src)
+    // Detect overlap and choose copy direction
+    if (d < s || d >= (s + n)) {
+        // No overlap or dest is before src - copy forward
         // Use word-aligned copy if possible
         if (n >= 16 && ((unsigned long)d % 4) == 0 && ((unsigned long)s % 4) == 0) {
             unsigned long *ld = (unsigned long *)d;
@@ -176,7 +283,7 @@ void *memmove(void *dest, const void *src, size_t n) {
             *d++ = *s++;
         }
     } else {
-        // Copy backward (dest is after src, possible overlap)
+        // Overlap detected - copy backward (dest is after src)
         d += n;
         s += n;
         while (n-- > 0) {
@@ -190,12 +297,31 @@ void *memmove(void *dest, const void *src, size_t n) {
 // Copy n bytes from src to dest (optimized, word-aligned)
 void *memcpy(void *dest, const void *src, size_t n) {
     // Null pointer checks
-    if (!dest || !src || n == 0) {
+    if (!dest || !src) {
         return dest;
+    }
+    
+    // Zero-size check
+    if (n == 0) {
+        return dest;
+    }
+    
+    // Bounds check
+    if (n > MAX_STRING_LENGTH) {
+        return dest; // Refuse to copy excessive amounts
     }
     
     unsigned char *d = (unsigned char *)dest;
     const unsigned char *s = (const unsigned char *)src;
+    
+    // Overlap detection - memcpy should not be used with overlapping regions
+    // Check if regions overlap
+    if ((d >= s && d < s + n) || (s >= d && s < d + n)) {
+        if (d != s) {
+            // Regions overlap! Use memmove for safety
+            return memmove(dest, src, n);
+        }
+    }
     
     // Word-aligned copy for large blocks (if both aligned)
     if (n >= 16 && ((unsigned long)d % 4) == 0 && ((unsigned long)s % 4) == 0) {
@@ -222,8 +348,18 @@ void *memcpy(void *dest, const void *src, size_t n) {
 // Set n bytes to value c (optimized, word-aligned)
 void *memset(void *s, int c, size_t n) {
     // Null pointer check
-    if (!s || n == 0) {
+    if (!s) {
         return s;
+    }
+    
+    // Zero-size check
+    if (n == 0) {
+        return s;
+    }
+    
+    // Bounds check
+    if (n > MAX_STRING_LENGTH) {
+        return s; // Refuse to set excessive amounts
     }
     
     unsigned char *p = (unsigned char *)s;
@@ -253,8 +389,18 @@ void *memset(void *s, int c, size_t n) {
     return s;
 }
 
-// Compare n bytes of two memory regions
+// Compare n bytes of two memory regions with safety checks
 int memcmp(const void *s1, const void *s2, size_t n) {
+    // Null pointer protection
+    if (!s1 || !s2) {
+        if (s1 == s2) return 0;
+        return s1 ? 1 : -1;
+    }
+    
+    // Bounds check
+    if (n == 0) return 0;
+    if (n > MAX_STRING_LENGTH) n = MAX_STRING_LENGTH;
+    
     const unsigned char *p1 = (const unsigned char *)s1;
     const unsigned char *p2 = (const unsigned char *)s2;
     
