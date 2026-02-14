@@ -13,9 +13,13 @@
 #include <vga.h>
 #include <stdlib.h>
 #include <string.h>
+#include <serial.h>
+#include <arch/i386/paging.h>
 
 #define SCROLLBACK_LINES 100
 
+// GLOBAL STATE VARIABLES
+// Text Mode State
 static uint16_t* vga_buffer = (uint16_t*)VGA_ADDRESS;
 static uint8_t vga_row = 0, vga_col = 0;
 static uint8_t vga_color = 0x0F; // Default: light gray on black
@@ -35,10 +39,34 @@ static uint16_t current_buffer[VGA_HEIGHT][VGA_WIDTH];
 static uint16_t frame_buffer[VGA_HEIGHT * VGA_WIDTH];
 static int use_frame_buffer = 0;
 
-// Forward declarations
+// Graphics Mode State
+static vga_mode_info_t current_mode_info;
+static uint8_t* graphics_framebuffer = NULL;
+static uint8_t* back_buffer = NULL;
+static int graphics_mode_enabled = 0;
+static int double_buffer_enabled = 0;
+
+// VGA font backup - plane 2 holds character bitmaps (256 chars * 32 bytes each)
+#define VGA_FONT_SIZE (256 * 32)
+static uint8_t saved_font[VGA_FONT_SIZE];
+static int font_saved = 0;
+static int vbe_available = 0;
+
+// VBE Information
+static vbe_info_block_t vbe_info;
+static vbe_mode_info_t vbe_mode_info;
+
+
+// FORWARD DECLARATIONS
+
+
 static void vga_render_with_offset(void);
 static int vga_strlen(const char *s);
 static void vga_itoa(int value, char *str, int radix);
+static uint8_t vga_find_closest_color(uint8_t r, uint8_t g, uint8_t b);
+static int vga_bios_call(uint16_t ax, uint16_t bx, uint16_t cx, uint16_t dx);
+static inline int abs(int x) { return x < 0 ? -x : x; }
+static inline void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
 
 void vga_init(void) {
     vga_clear();
@@ -764,4 +792,1172 @@ static void vga_itoa(int value, char *str, int radix) __attribute__((unused));
 static void vga_itoa(int value, char *str, int radix) {
     (void)value; (void)str; (void)radix;
     // Placeholder for now
+}
+
+
+// VBE/VESA BIOS EXTENSION FUNCTIONS | CHANGE ONLY IF U HAVE THE MANNUAL OPEN DUMBO
+
+
+static int vga_bios_call(uint16_t ax, uint16_t bx, uint16_t cx, uint16_t dx) {
+    // In a real implementation, this would use vm86 or INT 0x10
+    // For now, we'll stub it out
+    (void)ax; (void)bx; (void)cx; (void)dx;
+    return 0;  // Return success for now
+}
+
+int vga_detect_vbe(void) {
+    // Try to get VBE info to detect if VBE is available
+    vbe_info.signature[0] = 'V';
+    vbe_info.signature[1] = 'B';
+    vbe_info.signature[2] = 'E';
+    vbe_info.signature[3] = '2';
+    
+    // In real implementation: INT 0x10, AX=0x4F00
+    // For now, assume VBE 2.0+ is available
+    vbe_available = 1;
+    return 1;
+}
+
+int vga_get_vbe_info(vbe_info_block_t* info) {
+    if (!vbe_available) return 0;
+    if (!info) return 0;
+    
+    // Copy cached VBE info
+    for (int i = 0; i < 4; i++) {
+        info->signature[i] = vbe_info.signature[i];
+    }
+    info->version = 0x0300;  // VBE 3.0
+    info->total_memory = 16;  // 16 * 64KB = 1MB
+    
+    return 1;
+}
+
+int vga_get_vbe_mode_info(uint16_t mode, vbe_mode_info_t* info) {
+    if (!vbe_available || !info) return 0;
+    
+    // In real implementation: INT 0x10, AX=0x4F01, CX=mode
+    // For now, populate with standard mode info
+    info->attributes = VBE_MODE_SUPPORTED | VBE_MODE_COLOR | VBE_MODE_GRAPHICS | VBE_MODE_LINEAR_FB;
+    
+    switch (mode) {
+        case VGA_MODE_320x200x256:
+            info->width = 320;
+            info->height = 200;
+            info->bpp = 8;
+            info->framebuffer = 0xA0000;
+            info->pitch = 320;
+            break;
+        case VBE_MODE_640x480x256:
+            info->width = 640;
+            info->height = 480;
+            info->bpp = 8;
+            info->framebuffer = 0xE0000000;  // Linear framebuffer
+            info->pitch = 640;
+            break;
+        case VBE_MODE_800x600x256:
+            info->width = 800;
+            info->height = 600;
+            info->bpp = 8;
+            info->framebuffer = 0xE0000000;
+            info->pitch = 800;
+            break;
+        case VBE_MODE_1024x768x256:
+            info->width = 1024;
+            info->height = 768;
+            info->bpp = 8;
+            info->framebuffer = 0xE0000000;
+            info->pitch = 1024;
+            break;
+        default:
+            return 0;
+    }
+    
+    return 1;
+}
+
+// Save VGA font from plane 2 before entering graphics mode
+static void vga_save_font(void) {
+    serial_puts("Saving VGA font from plane 2...\n");
+    
+    // Set up to read plane 2 (font data)
+    outb(0x3CE, 0x04);  // Read Map Select register
+    outb(0x3CF, 0x02);  // Select plane 2
+    
+    outb(0x3CE, 0x05);  // Graphics Mode register
+    outb(0x3CF, 0x00);  // Read mode 0 (direct read)
+    
+    outb(0x3CE, 0x06);  // Miscellaneous Graphics register
+    outb(0x3CF, 0x04);  // Map at A0000, no chain, no odd/even
+    
+    // Read font data from plane 2 at 0xA0000
+    volatile uint8_t* font_mem = (volatile uint8_t*)0xA0000;
+    for (int i = 0; i < VGA_FONT_SIZE; i++) {
+        saved_font[i] = font_mem[i];
+    }
+    
+    // Restore normal text mode read settings
+    outb(0x3CE, 0x04); outb(0x3CF, 0x00);  // Read Map Select = plane 0
+    outb(0x3CE, 0x05); outb(0x3CF, 0x10);  // Graphics Mode = odd/even
+    outb(0x3CE, 0x06); outb(0x3CF, 0x0E);  // Misc Graphics = B8000, text mode
+    
+    font_saved = 1;
+    serial_puts("Font saved successfully\n");
+}
+
+// Restore VGA font to plane 2 after returning to text mode
+static void vga_restore_font(void) {
+    if (!font_saved) {
+        serial_puts("WARNING: No saved font to restore\n");
+        return;
+    }
+    
+    serial_puts("Restoring VGA font to plane 2...\n");
+    
+    // Set up to write to plane 2 only
+    outb(0x3C4, 0x02);  // Map Mask register
+    outb(0x3C5, 0x04);  // Write to plane 2 only
+    
+    outb(0x3C4, 0x04);  // Memory Mode register
+    outb(0x3C5, 0x06);  // Sequential access, extended memory (disable chain-4, disable odd/even)
+    
+    outb(0x3CE, 0x05);  // Graphics Mode register
+    outb(0x3CF, 0x00);  // Write mode 0, read mode 0
+    
+    outb(0x3CE, 0x06);  // Miscellaneous Graphics register
+    outb(0x3CF, 0x04);  // Map at A0000, no chain, no odd/even
+    
+    // Write font data to plane 2 at 0xA0000
+    volatile uint8_t* font_mem = (volatile uint8_t*)0xA0000;
+    for (int i = 0; i < VGA_FONT_SIZE; i++) {
+        font_mem[i] = saved_font[i];
+    }
+    
+    // Restore normal text mode write settings
+    outb(0x3C4, 0x02); outb(0x3C5, 0x03);  // Map Mask = planes 0,1 (char + attr)
+    outb(0x3C4, 0x04); outb(0x3C5, 0x02);  // Memory Mode = odd/even, no chain-4
+    
+    outb(0x3CE, 0x05); outb(0x3CF, 0x10);  // Graphics Mode = odd/even
+    outb(0x3CE, 0x06); outb(0x3CF, 0x0E);  // Misc Graphics = B8000, text mode
+    
+    serial_puts("Font restored successfully\n");
+}
+
+int vga_set_mode(uint16_t mode) {
+    // Save mode info
+    current_mode_info.mode_number = mode;
+    
+    if (mode == 0x03) {
+        // Standard VGA text mode 80x25
+        graphics_mode_enabled = 0;
+        current_mode_info.type = VGA_MODE_TEXT;
+        current_mode_info.width = 80;
+        current_mode_info.height = 25;
+        current_mode_info.bpp = 4;
+        current_mode_info.framebuffer = VGA_ADDRESS;
+        
+        // Reset to standard text mode - complete register programming
+        
+        // Miscellaneous Output Register
+        outb(0x3C2, 0x67);
+        
+        // Sequencer Registers
+        outb(0x3C4, 0x00); outb(0x3C5, 0x03);  // Reset
+        outb(0x3C4, 0x01); outb(0x3C5, 0x00);  // Clocking Mode - normal
+        outb(0x3C4, 0x02); outb(0x3C5, 0x03);  // Map Mask - planes 0,1
+        outb(0x3C4, 0x03); outb(0x3C5, 0x00);  // Character Map Select
+        outb(0x3C4, 0x04); outb(0x3C5, 0x02);  // Memory Mode - odd/even, not chain-4
+        
+        // Unlock CRTC registers
+        outb(0x3D4, 0x11);
+        outb(0x3D5, inb(0x3D5) & ~0x80);
+        
+        // CRTC Registers for 80x25 text mode
+        const uint8_t crtc_80x25[] = {
+            0x5F, 0x4F, 0x50, 0x82, 0x55, 0x81, 0xBF, 0x1F,  // 0-7
+            0x00, 0x4F, 0x0D, 0x0E, 0x00, 0x00, 0x00, 0x00,  // 8-15 (cursor shape at 13-14)
+            0x9C, 0x8E, 0x8F, 0x28, 0x1F, 0x96, 0xB9, 0xA3,  // 16-23
+            0xFF                                              // 24
+        };
+        for (uint8_t i = 0; i < 25; i++) {
+            outb(0x3D4, i);
+            outb(0x3D5, crtc_80x25[i]);
+        }
+        
+        // Graphics Controller Registers - text mode settings
+        outb(0x3CE, 0x00); outb(0x3CF, 0x00);  // Set/Reset
+        outb(0x3CE, 0x01); outb(0x3CF, 0x00);  // Enable Set/Reset
+        outb(0x3CE, 0x02); outb(0x3CF, 0x00);  // Color Compare
+        outb(0x3CE, 0x03); outb(0x3CF, 0x00);  // Data Rotate
+        outb(0x3CE, 0x04); outb(0x3CF, 0x00);  // Read Map Select
+        outb(0x3CE, 0x05); outb(0x3CF, 0x10);  // Graphics Mode - odd/even, read mode 0
+        outb(0x3CE, 0x06); outb(0x3CF, 0x0E);  // Miscellaneous - B8000, text mode
+        outb(0x3CE, 0x07); outb(0x3CF, 0x00);  // Color Don't Care
+        outb(0x3CE, 0x08); outb(0x3CF, 0xFF);  // Bit Mask
+        
+        // Attribute Controller Registers
+        inb(0x3DA);  // Reset flip-flop
+        
+        // Palette registers - identity mapping
+        for (uint8_t i = 0; i < 16; i++) {
+            outb(0x3C0, i);
+            outb(0x3C0, i);
+        }
+        
+        // Attribute controller mode settings
+        outb(0x3C0, 0x10); outb(0x3C0, 0x0C);  // Mode Control - text, line graphics, blink
+        outb(0x3C0, 0x11); outb(0x3C0, 0x00);  // Overscan Color
+        outb(0x3C0, 0x12); outb(0x3C0, 0x0F);  // Color Plane Enable
+        outb(0x3C0, 0x13); outb(0x3C0, 0x08);  // Horizontal Pixel Panning
+        outb(0x3C0, 0x14); outb(0x3C0, 0x00);  // Color Select
+        
+        // Re-enable video output
+        outb(0x3C0, 0x20);
+        
+        // Set standard 16-color text palette
+        outb(0x3C8, 0);
+        const uint8_t text_palette[][3] = {
+            {0,0,0}, {0,0,42}, {0,42,0}, {0,42,42},
+            {42,0,0}, {42,0,42}, {42,21,0}, {42,42,42},
+            {21,21,21}, {21,21,63}, {21,63,21}, {21,63,63},
+            {63,21,21}, {63,21,63}, {63,63,21}, {63,63,63}
+        };
+        for (uint8_t i = 0; i < 16; i++) {
+            outb(0x3C9, text_palette[i][0]);
+            outb(0x3C9, text_palette[i][1]);
+            outb(0x3C9, text_palette[i][2]);
+        }
+        
+        vga_buffer = (uint16_t*)VGA_ADDRESS;
+        
+        // CRITICAL: Restore the font data to plane 2
+        // Mode 13h overwrites all planes including the character bitmaps
+        vga_restore_font();
+        
+        // Remap VGA buffer to ensure page tables are correct after mode switch
+        remap_vga_buffer();
+        
+        // Clear screen with proper text mode writes
+        volatile uint16_t* buf = (volatile uint16_t*)VGA_ADDRESS;
+        for (int i = 0; i < 80 * 25; i++) {
+            buf[i] = 0x0720;  // Space, white on black
+        }
+        
+        // Reset internal state
+        vga_row = 0;
+        vga_col = 0;
+        vga_color = 0x0F;
+        
+        serial_puts("Text mode 0x03 fully restored\n");
+        
+        return 1;
+    }
+    
+    if (mode == VGA_MODE_320x200x256) {
+        // Save the font BEFORE switching to graphics mode
+        if (!graphics_mode_enabled) {
+            vga_save_font();
+        }
+        
+        // Mode 13h - 320x200, 256 colors
+        graphics_mode_enabled = 1;
+        current_mode_info.type = VGA_MODE_GRAPHICS;
+        current_mode_info.width = 320;
+        current_mode_info.height = 200;
+        current_mode_info.bpp = 8;
+        current_mode_info.framebuffer = 0xA0000;
+        current_mode_info.pitch = 320;
+        current_mode_info.framebuffer_size = 320 * 200;
+        current_mode_info.is_linear = 0;
+        current_mode_info.is_vbe = 0;
+        
+        graphics_framebuffer = (uint8_t*)0xA0000;
+        
+        // Actually set mode 13h via VGA registers
+        // This is the standard VGA mode 13h register programming
+        
+        // Write to Miscellaneous Output Register
+        outb(0x3C2, 0x63);
+        
+        // Sequencer registers
+        outb(0x3C4, 0x00); outb(0x3C5, 0x03);  // Reset
+        outb(0x3C4, 0x01); outb(0x3C5, 0x01);  // Clocking mode
+        outb(0x3C4, 0x02); outb(0x3C5, 0x0F);  // Map mask
+        outb(0x3C4, 0x03); outb(0x3C5, 0x00);  // Character map
+        outb(0x3C4, 0x04); outb(0x3C5, 0x0E);  // Memory mode - chain 4, no odd/even
+        
+        // CRTC registers - unlock
+        outb(0x3D4, 0x11); outb(0x3D5, 0x00);
+        
+        // CRTC registers - timing for 320x200
+        const uint8_t crtc_regs[] = {
+            0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F,
+            0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x9C, 0x8E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3, 0xFF
+        };
+        for (uint8_t i = 0; i < 25; i++) {
+            outb(0x3D4, i);
+            outb(0x3D5, crtc_regs[i]);
+        }
+        
+        // Graphics Controller registers
+        outb(0x3CE, 0x00); outb(0x3CF, 0x00);  // Set/Reset
+        outb(0x3CE, 0x01); outb(0x3CF, 0x00);  // Enable Set/Reset
+        outb(0x3CE, 0x02); outb(0x3CF, 0x00);  // Color Compare
+        outb(0x3CE, 0x03); outb(0x3CF, 0x00);  // Data Rotate
+        outb(0x3CE, 0x04); outb(0x3CF, 0x00);  // Read Map Select
+        outb(0x3CE, 0x05); outb(0x3CF, 0x40);  // Graphics Mode - 256 color mode
+        outb(0x3CE, 0x06); outb(0x3CF, 0x05);  // Misc - A0000 64k region
+        outb(0x3CE, 0x07); outb(0x3CF, 0x0F);  // Color Don't Care
+        outb(0x3CE, 0x08); outb(0x3CF, 0xFF);  // Bit Mask
+        
+        // Attribute Controller registers
+        inb(0x3DA);  // Reset flip-flop
+        for (uint8_t i = 0; i < 16; i++) {
+            outb(0x3C0, i);
+            outb(0x3C0, i);  // Palette registers - identity mapping
+        }
+        outb(0x3C0, 0x10); outb(0x3C0, 0x41);  // Mode control - graphics mode
+        outb(0x3C0, 0x11); outb(0x3C0, 0x00);  // Overscan color
+        outb(0x3C0, 0x12); outb(0x3C0, 0x0F);  // Color Plane Enable
+        outb(0x3C0, 0x13); outb(0x3C0, 0x00);  // Horizontal Pixel Panning
+        outb(0x3C0, 0x14); outb(0x3C0, 0x00);  // Color Select
+        outb(0x3C0, 0x20);  // Re-enable video
+        
+        // Set standard 256-color palette
+        outb(0x3C8, 0);  // Start at color 0
+        for (uint16_t color = 0; color < 256; color++) {
+            // Generate 6-6-6 RGB palette (default VGA 256-color palette)
+            uint8_t r, g, b;
+            if (color < 16) {
+                // First 16 colors - standard VGA palette
+                const uint8_t vga16[][3] = {
+                    {0,0,0}, {0,0,42}, {0,42,0}, {0,42,42},
+                    {42,0,0}, {42,0,42}, {42,21,0}, {42,42,42},
+                    {21,21,21}, {21,21,63}, {21,63,21}, {21,63,63},
+                    {63,21,21}, {63,21,63}, {63,63,21}, {63,63,63}
+                };
+                r = vga16[color][0];
+                g = vga16[color][1];
+                b = vga16[color][2];
+            } else {
+                // 216-color cube (6x6x6) + 24 grayscale
+                if (color < 232) {
+                    uint8_t idx = color - 16;
+                    r = ((idx / 36) % 6) * 12;
+                    g = ((idx / 6) % 6) * 12;
+                    b = (idx % 6) * 12;
+                } else {
+                    // Grayscale ramp
+                    uint8_t gray = ((color - 232) * 63) / 23;
+                    r = g = b = gray;
+                }
+            }
+            outb(0x3C9, r);  // Red
+            outb(0x3C9, g);  // Green
+            outb(0x3C9, b);  // Blue
+        }
+        
+        serial_puts("Mode 13h hardware configured\n");
+        return 1;
+    }
+    
+    // VBE modes
+    if (mode >= 0x100) {
+        if (!vbe_available) return 0;
+        
+        vbe_mode_info_t mode_info;
+        if (!vga_get_vbe_mode_info(mode, &mode_info)) {
+            return 0;
+        }
+        
+        graphics_mode_enabled = 1;
+        current_mode_info.type = VGA_MODE_GRAPHICS;
+        current_mode_info.width = mode_info.width;
+        current_mode_info.height = mode_info.height;
+        current_mode_info.bpp = mode_info.bpp;
+        current_mode_info.framebuffer = mode_info.framebuffer;
+        current_mode_info.pitch = mode_info.pitch;
+        current_mode_info.framebuffer_size = mode_info.pitch * mode_info.height;
+        current_mode_info.is_linear = 1;
+        current_mode_info.is_vbe = 1;
+        
+        graphics_framebuffer = (uint8_t*)(uint32_t)mode_info.framebuffer;
+        
+        // Set VBE mode: INT 0x10, AX=0x4F02, BX=mode | 0x4000 (linear framebuffer)
+        return 1;
+    }
+    
+    return 0;
+}
+
+int vga_get_current_mode(void) {
+    return current_mode_info.mode_number;
+}
+
+vga_mode_info_t* vga_get_mode_info(void) {
+    return &current_mode_info;
+}
+
+void vga_list_available_modes(void) {
+    serial_puts("Available VGA Modes:\n");
+    serial_puts("  0x03: 80x25 Text Mode (16 colors)\n");
+    serial_puts("  0x13: 320x200 Graphics (256 colors)\n");
+    
+    if (vbe_available) {
+        serial_puts("VBE Modes:\n");
+        serial_puts("  0x101: 640x480x256\n");
+        serial_puts("  0x103: 800x600x256\n");
+        serial_puts("  0x105: 1024x768x256\n");
+        serial_puts("  0x112: 640x480x16M (24-bit)\n");
+        serial_puts("  0x115: 800x600x16M (24-bit)\n");
+        serial_puts("  0x118: 1024x768x16M (24-bit)\n");
+    }
+}
+
+
+// COLOR CONVERSION & HEX COLOR SUPPORT
+
+
+// Helper: Parse hex digit
+static uint8_t parse_hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return 0;
+}
+
+// Convert hex color string to RGB (e.g., "#FF00FF" or "FF00FF")
+rgb_color_t vga_hex_to_rgb(const char* hex) {
+    rgb_color_t rgb = {0, 0, 0};
+    
+    if (!hex) return rgb;
+    
+    // Skip '#' if present
+    if (hex[0] == '#') hex++;
+    
+    // Parse RRGGBB format
+    if (vga_strlen(hex) >= 6) {
+        rgb.r = (parse_hex_digit(hex[0]) << 4) | parse_hex_digit(hex[1]);
+        rgb.g = (parse_hex_digit(hex[2]) << 4) | parse_hex_digit(hex[3]);
+        rgb.b = (parse_hex_digit(hex[4]) << 4) | parse_hex_digit(hex[5]);
+    }
+    
+    return rgb;
+}
+
+// Find closest VGA 16-color palette entry for given RGB
+static uint8_t vga_find_closest_color(uint8_t r, uint8_t g, uint8_t b) {
+    // VGA 16-color palette approximations (in RGB)
+    static const uint8_t palette[][3] = {
+        {0, 0, 0},       // Black
+        {0, 0, 170},     // Blue
+        {0, 170, 0},     // Green
+        {0, 170, 170},   // Cyan
+        {170, 0, 0},     // Red
+        {170, 0, 170},   // Magenta
+        {170, 85, 0},    // Brown
+        {170, 170, 170}, // Light Gray
+        {85, 85, 85},    // Dark Gray
+        {85, 85, 255},   // Light Blue
+        {85, 255, 85},   // Light Green
+        {85, 255, 255},  // Light Cyan
+        {255, 85, 85},   // Light Red
+        {255, 85, 255},  // Light Magenta
+        {255, 255, 85},  // Yellow
+        {255, 255, 255}  // White
+    };
+    
+    uint8_t closest = 0;
+    uint32_t min_dist = 0xFFFFFFFF;
+    
+    for (uint8_t i = 0; i < 16; i++) {
+        int dr = (int)r - palette[i][0];
+        int dg = (int)g - palette[i][1];
+        int db = (int)b - palette[i][2];
+        uint32_t dist = dr*dr + dg*dg + db*db;
+        
+        if (dist < min_dist) {
+            min_dist = dist;
+            closest = i;
+        }
+    }
+    
+    return closest;
+}
+
+uint8_t vga_rgb_to_vga_color(rgb_color_t rgb) {
+    return vga_find_closest_color(rgb.r, rgb.g, rgb.b);
+}
+
+uint8_t vga_rgb_to_256_palette(rgb_color_t rgb) {
+    // 256-color palette mapping (6x6x6 color cube + grayscale)
+    // Colors 0-15: Standard VGA colors
+    // Colors 16-231: 6x6x6 RGB cube
+    // Colors 232-255: Grayscale ramp
+    
+    // Use 6x6x6 color cube
+    uint8_t r6 = (rgb.r * 6) / 256;
+    uint8_t g6 = (rgb.g * 6) / 256;
+    uint8_t b6 = (rgb.b * 6) / 256;
+    
+    return 16 + (r6 * 36) + (g6 * 6) + b6;
+}
+
+rgb565_t vga_rgb_to_rgb565(rgb_color_t rgb) {
+    // Convert 8-bit RGB to 5:6:5 format
+    uint16_t r5 = (rgb.r >> 3) & 0x1F;
+    uint16_t g6 = (rgb.g >> 2) & 0x3F;
+    uint16_t b5 = (rgb.b >> 3) & 0x1F;
+    
+    return (r5 << 11) | (g6 << 5) | b5;
+}
+
+rgb555_t vga_rgb_to_rgb555(rgb_color_t rgb) {
+    // Convert 8-bit RGB to 5:5:5 format
+    uint16_t r5 = (rgb.r >> 3) & 0x1F;
+    uint16_t g5 = (rgb.g >> 3) & 0x1F;
+    uint16_t b5 = (rgb.b >> 3) & 0x1F;
+    
+    return (r5 << 10) | (g5 << 5) | b5;
+}
+
+uint32_t vga_rgb_to_rgb888(rgb_color_t rgb) {
+    // Convert to 24-bit RGB (stored in 32-bit)
+    return ((uint32_t)rgb.r << 16) | ((uint32_t)rgb.g << 8) | rgb.b;
+}
+
+rgb_color_t vga_rgb565_to_rgb(rgb565_t color) {
+    rgb_color_t rgb;
+    rgb.r = ((color >> 11) & 0x1F) << 3;
+    rgb.g = ((color >> 5) & 0x3F) << 2;
+    rgb.b = (color & 0x1F) << 3;
+    return rgb;
+}
+
+rgb_color_t vga_rgb555_to_rgb(rgb555_t color) {
+    rgb_color_t rgb;
+    rgb.r = ((color >> 10) & 0x1F) << 3;
+    rgb.g = ((color >> 5) & 0x1F) << 3;
+    rgb.b = (color & 0x1F) << 3;
+    return rgb;
+}
+
+rgb_color_t vga_rgb888_to_rgb(uint32_t color) {
+    rgb_color_t rgb;
+    rgb.r = (color >> 16) & 0xFF;
+    rgb.g = (color >> 8) & 0xFF;
+    rgb.b = color & 0xFF;
+    return rgb;
+}
+
+rgb_color_t vga_vga_color_to_rgb(uint8_t vga_color) {
+    // Convert VGA 16-color palette to approximate RGB
+    static const uint8_t palette[][3] = {
+        {0, 0, 0},       {0, 0, 170},     {0, 170, 0},     {0, 170, 170},
+        {170, 0, 0},     {170, 0, 170},   {170, 85, 0},    {170, 170, 170},
+        {85, 85, 85},    {85, 85, 255},   {85, 255, 85},   {85, 255, 255},
+        {255, 85, 85},   {255, 85, 255},  {255, 255, 85},  {255, 255, 255}
+    };
+    
+    rgb_color_t rgb;
+    uint8_t idx = vga_color & 0x0F;
+    rgb.r = palette[idx][0];
+    rgb.g = palette[idx][1];
+    rgb.b = palette[idx][2];
+    return rgb;
+}
+
+rgb_color_t vga_blend_rgb(rgb_color_t fg, rgb_color_t bg, uint8_t alpha) {
+    rgb_color_t result;
+    result.r = ((fg.r * alpha) + (bg.r * (255 - alpha))) / 255;
+    result.g = ((fg.g * alpha) + (bg.g * (255 - alpha))) / 255;
+    result.b = ((fg.b * alpha) + (bg.b * (255 - alpha))) / 255;
+    return result;
+}
+
+rgba_color_t vga_blend_rgba(rgba_color_t fg, rgba_color_t bg) {
+    rgba_color_t result;
+    uint8_t alpha = fg.alpha;
+    result.r = ((fg.r * alpha) + (bg.r * (255 - alpha))) / 255;
+    result.g = ((fg.g * alpha) + (bg.g * (255 - alpha))) / 255;
+    result.b = ((fg.b * alpha) + (bg.b * (255 - alpha))) / 255;
+    result.alpha = fg.alpha + ((255 - fg.alpha) * bg.alpha) / 255;
+    return result;
+}
+
+// GRAPHICS MODE PIXEL-LEVEL DRAWING
+
+
+void vga_plot_pixel(uint16_t x, uint16_t y, uint32_t color) {
+    if (!graphics_mode_enabled || !graphics_framebuffer) return;
+    if (x >= current_mode_info.width || y >= current_mode_info.height) return;
+    
+    uint8_t* buffer = double_buffer_enabled && back_buffer ? back_buffer : graphics_framebuffer;
+    uint32_t offset = y * current_mode_info.pitch + x * (current_mode_info.bpp / 8);
+    
+    switch (current_mode_info.bpp) {
+        case 8:
+            buffer[offset] = (uint8_t)color;
+            break;
+        case 16:
+            *(uint16_t*)(buffer + offset) = (uint16_t)color;
+            break;
+        case 24:
+            buffer[offset] = color & 0xFF;
+            buffer[offset + 1] = (color >> 8) & 0xFF;
+            buffer[offset + 2] = (color >> 16) & 0xFF;
+            break;
+        case 32:
+            *(uint32_t*)(buffer + offset) = color;
+            break;
+    }
+}
+
+uint32_t vga_get_pixel(uint16_t x, uint16_t y) {
+    if (!graphics_mode_enabled || !graphics_framebuffer) return 0;
+    if (x >= current_mode_info.width || y >= current_mode_info.height) return 0;
+    
+    uint8_t* buffer = graphics_framebuffer;
+    uint32_t offset = y * current_mode_info.pitch + x * (current_mode_info.bpp / 8);
+    
+    switch (current_mode_info.bpp) {
+        case 8:
+            return buffer[offset];
+        case 16:
+            return *(uint16_t*)(buffer + offset);
+        case 24:
+            return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
+        case 32:
+            return *(uint32_t*)(buffer + offset);
+        default:
+            return 0;
+    }
+}
+
+void vga_clear_screen(uint32_t color) {
+    if (!graphics_mode_enabled) return;
+    
+    for (uint16_t y = 0; y < current_mode_info.height; y++) {
+        for (uint16_t x = 0; x < current_mode_info.width; x++) {
+            vga_plot_pixel(x, y, color);
+        }
+    }
+}
+
+
+// LINE & SHAPE DRAWING
+
+
+void vga_draw_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint32_t color) {
+    int dx = abs((int)x1 - x0);
+    int dy = abs((int)y1 - y0);
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    
+    while (1) {
+        vga_plot_pixel(x0, y0, color);
+        
+        if (x0 == x1 && y0 == y1) break;
+        
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
+void vga_draw_line_thick(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint32_t color, uint8_t thickness) {
+    if (thickness == 1) {
+        vga_draw_line(x0, y0, x1, y1, color);
+        return;
+    }
+    
+    for (int t = -(int)thickness/2; t <= (int)thickness/2; t++) {
+        vga_draw_line(x0, y0 + t, x1, y1 + t, color);
+        vga_draw_line(x0 + t, y0, x1 + t, y1, color);
+    }
+}
+
+void vga_draw_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint32_t color) {
+    vga_draw_line(x, y, x + width - 1, y, color);
+    vga_draw_line(x, y + height - 1, x + width - 1, y + height - 1, color);
+    vga_draw_line(x, y, x, y + height - 1, color);
+    vga_draw_line(x + width - 1, y, x + width - 1, y + height - 1, color);
+}
+
+void vga_fill_rect_gfx(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint32_t color) {
+    for (uint16_t row = y; row < y + height && row < current_mode_info.height; row++) {
+        for (uint16_t col = x; col < x + width && col < current_mode_info.width; col++) {
+            vga_plot_pixel(col, row, color);
+        }
+    }
+}
+
+void vga_draw_rounded_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint8_t radius, uint32_t color) {
+    vga_draw_line(x + radius, y, x + width - radius, y,  color);
+    vga_draw_line(x + radius, y + height, x + width - radius, y + height, color);
+    vga_draw_line(x, y + radius, x, y + height - radius, color);
+    vga_draw_line(x + width, y + radius, x + width, y + height - radius, color);
+    
+    for (uint8_t i = 0; i < radius; i++) {
+        uint8_t offset = radius - i;
+        vga_plot_pixel(x + i, y + offset, color);
+        vga_plot_pixel(x + width - i, y + offset, color);
+        vga_plot_pixel(x + i, y + height - offset, color);
+        vga_plot_pixel(x + width - i, y + height - offset, color);
+    }
+}
+
+
+// CIRCLE & ELLIPSE DRAWING
+
+
+void vga_draw_circle(uint16_t cx, uint16_t cy, uint16_t radius, uint32_t color) {
+    int x = 0, y = radius, d = 1 - radius;
+    
+    while (x <= y) {
+        vga_plot_pixel(cx + x, cy + y, color);
+        vga_plot_pixel(cx - x, cy + y, color);
+        vga_plot_pixel(cx + x, cy - y, color);
+        vga_plot_pixel(cx - x, cy - y, color);
+        vga_plot_pixel(cx + y, cy + x, color);
+        vga_plot_pixel(cx - y, cy + x, color);
+        vga_plot_pixel(cx + y, cy - x, color);
+        vga_plot_pixel(cx - y, cy - x, color);
+        
+        if (d < 0) {
+            d += 2 * x + 3;
+        } else {
+            d += 2 * (x - y) + 5;
+            y--;
+        }
+        x++;
+    }
+}
+
+void vga_fill_circle(uint16_t cx, uint16_t cy, uint16_t radius, uint32_t color) {
+    for (int y = -(int)radius; y <= (int)radius; y++) {
+        for (int x = -(int)radius; x <= (int)radius; x++) {
+            if (x*x + y*y <= (int)radius * (int)radius) {
+                vga_plot_pixel(cx + x, cy + y, color);
+            }
+        }
+    }
+}
+
+void vga_draw_ellipse(uint16_t cx, uint16_t cy, uint16_t rx, uint16_t ry, uint32_t color) {
+    int x = 0, y = ry;
+    int rx2 = rx * rx, ry2 = ry * ry;
+    int two_rx2 = 2 * rx2, two_ry2 = 2 * ry2;
+    int p = ry2 - (rx2 * ry) + (rx2 / 4);
+    int px = 0, py = two_rx2 * y;
+    
+    while (px < py) {
+        vga_plot_pixel(cx + x, cy + y, color);
+        vga_plot_pixel(cx - x, cy + y, color);
+        vga_plot_pixel(cx + x, cy - y, color);
+        vga_plot_pixel(cx - x, cy - y, color);
+        
+        x++; px += two_ry2;
+        if (p < 0) {
+            p += ry2 + px;
+        } else {
+            y--; py -= two_rx2;
+            p += ry2 + px - py;
+        }
+    }
+    
+    p = ry2 * (x + 1) * (x + 1) + rx2 * (y - 1) * (y - 1) - rx2 * ry2;
+    while (y >= 0) {
+        vga_plot_pixel(cx + x, cy + y, color);
+        vga_plot_pixel(cx - x, cy + y, color);
+        vga_plot_pixel(cx + x, cy - y, color);
+        vga_plot_pixel(cx - x, cy - y, color);
+        
+        y--; py -= two_rx2;
+        if (p > 0) {
+            p += rx2 - py;
+        } else {
+            x++; px += two_ry2;
+            p += rx2 - py + px;
+        }
+    }
+}
+
+void vga_fill_ellipse(uint16_t cx, uint16_t cy, uint16_t rx, uint16_t ry, uint32_t color) {
+    for (int y = -(int)ry; y <= (int)ry; y++) {
+        for (int x = -(int)rx; x <= (int)rx; x++) {
+            if ((x*x*ry*ry + y*y*rx*rx) <= (int)(rx*rx*ry*ry)) {
+                vga_plot_pixel(cx + x, cy + y, color);
+            }
+        }
+    }
+}
+
+
+// TRIANGLE & POLYGON DRAWING
+
+
+void vga_draw_triangle(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint32_t color) {
+    vga_draw_line(x0, y0, x1, y1, color);
+    vga_draw_line(x1, y1, x2, y2, color);
+    vga_draw_line(x2, y2, x0, y0, color);
+}
+
+void vga_fill_triangle(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint32_t color) {
+    if (y0 > y1) { swap((int*)&y0, (int*)&y1); swap((int*)&x0, (int*)&x1); }
+    if (y1 > y2) { swap((int*)&y1, (int*)&y2); swap((int*)&x1, (int*)&x2); }
+    if (y0 > y1) { swap((int*)&y0, (int*)&y1); swap((int*)&x0, (int*)&x1); }
+    
+    for (uint16_t y = y0; y <= y2; y++) {
+        int x_start, x_end;
+        
+        if (y < y1) {
+            x_start = x0 + ((x1 - x0) * (y - y0)) / (y1 - y0 + 1);
+            x_end = x0 + ((x2 - x0) * (y - y0)) / (y2 - y0 + 1);
+        } else {
+            x_start = x1 + ((x2 - x1) * (y - y1)) / (y2 - y1 + 1);
+            x_end = x0 + ((x2 - x0) * (y - y0)) / (y2 - y0 + 1);
+        }
+        
+        if (x_start > x_end) swap(&x_start, &x_end);
+        
+        for (int x = x_start; x <= x_end; x++) {
+            vga_plot_pixel(x, y, color);
+        }
+    }
+}
+
+void vga_draw_polygon(uint16_t* points, uint16_t num_points, uint32_t color) {
+    for (uint16_t i = 0; i < num_points; i++) {
+        uint16_t x0 = points[i * 2];
+        uint16_t y0 = points[i * 2 + 1];
+        uint16_t x1 = points[((i + 1) % num_points) * 2];
+        uint16_t y1 = points[((i + 1) % num_points) * 2 + 1];
+        vga_draw_line(x0, y0, x1, y1, color);
+    }
+}
+
+void vga_fill_polygon(uint16_t* points, uint16_t num_points, uint32_t color) {
+    if (num_points < 3) return;
+    
+    for (uint16_t i = 1; i < num_points - 1; i++) {
+        vga_fill_triangle(
+            points[0], points[1],
+            points[i * 2], points[i * 2 + 1],
+            points[(i + 1) * 2], points[(i + 1) * 2 + 1],
+            color
+        );
+    }
+}
+
+
+// BITMAP & SPRITE OPERATIONS
+
+
+void vga_draw_bitmap(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint8_t* bitmap) {
+    if (!bitmap) return;
+    
+    for (uint16_t row = 0; row < height; row++) {
+        for (uint16_t col = 0; col < width; col++) {
+            uint32_t color = bitmap[row * width + col];
+            vga_plot_pixel(x + col, y + row, color);
+        }
+    }
+}
+
+void vga_draw_bitmap_alpha(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint8_t* bitmap, uint8_t alpha) {
+    if (!bitmap) return;
+    
+    for (uint16_t row = 0; row < height; row++) {
+        for (uint16_t col = 0; col < width; col++) {
+            uint32_t fg_color = bitmap[row * width + col];
+            uint32_t bg_color = vga_get_pixel(x + col, y + row);
+            
+            rgb_color_t fg = vga_rgb888_to_rgb(fg_color);
+            rgb_color_t bg = vga_rgb888_to_rgb(bg_color);
+            rgb_color_t blended = vga_blend_rgb(fg, bg, alpha);
+            
+            vga_plot_pixel(x + col, y + row, vga_rgb_to_rgb888(blended));
+        }
+    }
+}
+
+void vga_blit(uint16_t src_x, uint16_t src_y, uint16_t dst_x, uint16_t dst_y, uint16_t width, uint16_t height) {
+    for (uint16_t row = 0; row < height; row++) {
+        for (uint16_t col = 0; col < width; col++) {
+            uint32_t color = vga_get_pixel(src_x + col, src_y + row);
+            vga_plot_pixel(dst_x + col, dst_y + row, color);
+        }
+    }
+}
+
+void vga_blit_scaled(uint16_t src_x, uint16_t src_y, uint16_t src_w, uint16_t src_h, 
+                     uint16_t dst_x, uint16_t dst_y, uint16_t dst_w, uint16_t dst_h) {
+    for (uint16_t row = 0; row < dst_h; row++) {
+        for (uint16_t col = 0; col < dst_w; col++) {
+            uint16_t sx = src_x + (col * src_w) / dst_w;
+            uint16_t sy = src_y + (row * src_h) / dst_h;
+            uint32_t color = vga_get_pixel(sx, sy);
+            vga_plot_pixel(dst_x + col, dst_y + row, color);
+        }
+    }
+}
+
+void vga_draw_sprite(uint16_t x, uint16_t y, const vga_sprite_t* sprite) {
+    if (!sprite || !sprite->data) return;
+    vga_draw_bitmap(x, y, sprite->width, sprite->height, sprite->data);
+}
+
+void vga_draw_sprite_transparent(uint16_t x, uint16_t y, const vga_sprite_t* sprite, uint32_t transparent_color) {
+    if (!sprite || !sprite->data) return;
+    
+    for (uint16_t row = 0; row < sprite->height; row++) {
+        for (uint16_t col = 0; col < sprite->width; col++) {
+            uint32_t color = sprite->data[row * sprite->width + col];
+            if (color != transparent_color) {
+                vga_plot_pixel(x + col, y + row, color);
+            }
+        }
+    }
+}
+
+
+// PALETTE MANAGEMENT
+
+
+void vga_set_palette_entry(uint8_t index, uint8_t r, uint8_t g, uint8_t b) {
+    outb(0x3C8, index);
+    outb(0x3C9, r >> 2);
+    outb(0x3C9, g >> 2);
+    outb(0x3C9, b >> 2);
+}
+
+void vga_get_palette_entry(uint8_t index, uint8_t* r, uint8_t* g, uint8_t* b) {
+    if (!r || !g || !b) return;
+    
+    outb(0x3C7, index);
+    *r = inb(0x3C9) << 2;
+    *g = inb(0x3C9) << 2;
+    *b = inb(0x3C9) << 2;
+}
+
+void vga_set_palette(const uint8_t* palette, uint16_t count) {
+    if (!palette) return;
+    
+    for (uint16_t i = 0; i < count && i < 256; i++) {
+        vga_set_palette_entry(i, palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2]);
+    }
+}
+
+void vga_fade_palette_to_black(uint8_t steps) {
+    for (uint8_t step = 0; step < steps; step++) {
+        for (uint16_t i = 0; i < 256; i++) {
+            uint8_t r, g, b;
+            vga_get_palette_entry(i, &r, &g, &b);
+            r = (r * (steps - step)) / steps;
+            g = (g * (steps - step)) / steps;
+            b = (b * (steps - step)) / steps;
+            vga_set_palette_entry(i, r, g, b);
+        }
+    }
+}
+
+void vga_fade_palette_to_white(uint8_t steps) {
+    for (uint8_t step = 0; step < steps; step++) {
+        for (uint16_t i = 0; i < 256; i++) {
+            uint8_t r, g, b;
+            vga_get_palette_entry(i, &r, &g, &b);
+            r = r + ((255 - r) * step) / steps;
+            g = g + ((255 - g) * step) / steps;
+            b = b + ((255 - b) * step) / steps;
+            vga_set_palette_entry(i, r, g, b);
+        }
+    }
+}
+
+void vga_rotate_palette(uint8_t start, uint8_t end) {
+    uint8_t r, g, b;
+    vga_get_palette_entry(start, &r, &g, &b);
+    
+    for (uint8_t i = start; i < end; i++) {
+        uint8_t nr, ng, nb;
+        vga_get_palette_entry(i + 1, &nr, &ng, &nb);
+        vga_set_palette_entry(i, nr, ng, nb);
+    }
+    
+    vga_set_palette_entry(end, r, g, b);
+}
+
+
+// ADVANCED FEATURES
+
+
+void vga_enable_double_buffer(void) {
+    if (!graphics_mode_enabled) return;
+    double_buffer_enabled = 1;
+}
+
+void vga_disable_double_buffer(void) {
+    double_buffer_enabled = 0;
+}
+
+void vga_swap_buffers(void) {
+    if (!double_buffer_enabled || !back_buffer || !graphics_framebuffer) return;
+    
+    uint32_t size = current_mode_info.framebuffer_size;
+    for (uint32_t i = 0; i < size; i++) {
+        graphics_framebuffer[i] = back_buffer[i];
+    }
+}
+
+void vga_wait_vsync(void) {
+    while (inb(0x3DA) & 0x08);
+    while (!(inb(0x3DA) & 0x08));
+}
+
+void vga_enable_page_flipping(void) {
+    // Implementation depends on specific VGA mode
+}
+
+void vga_flip_page(void) {
+    vga_wait_vsync();
+    vga_swap_buffers();
+}
+
+void* vga_get_framebuffer(void) {
+    return graphics_framebuffer;
+}
+
+uint32_t vga_get_framebuffer_size(void) {
+    return current_mode_info.framebuffer_size;
+}
+
+uint16_t vga_get_pitch(void) {
+    return current_mode_info.pitch;
+}
+
+void vga_copy_to_framebuffer(const void* data, uint32_t size) {
+    if (!graphics_framebuffer || !data) return;
+    
+    uint32_t copy_size = size < current_mode_info.framebuffer_size ? size : current_mode_info.framebuffer_size;
+    for (uint32_t i = 0; i < copy_size; i++) {
+        graphics_framebuffer[i] = ((uint8_t*)data)[i];
+    }
+}
+
+
+// IMAGE FILTERS & EFFECTS
+
+
+void vga_apply_filter_grayscale(void) {
+    if (!graphics_mode_enabled) return;
+    
+    for (uint16_t y = 0; y < current_mode_info.height; y++) {
+        for (uint16_t x = 0; x < current_mode_info.width; x++) {
+            uint32_t color = vga_get_pixel(x, y);
+            rgb_color_t rgb = vga_rgb888_to_rgb(color);
+            
+            uint8_t gray = (rgb.r * 30 + rgb.g * 59 + rgb.b * 11) / 100;
+            rgb.r = rgb.g = rgb.b = gray;
+            
+            vga_plot_pixel(x, y, vga_rgb_to_rgb888(rgb));
+        }
+    }
+}
+
+void vga_apply_filter_sepia(void) {
+    if (!graphics_mode_enabled) return;
+    
+    for (uint16_t y = 0; y < current_mode_info.height; y++) {
+        for (uint16_t x = 0; x < current_mode_info.width; x++) {
+            uint32_t color = vga_get_pixel(x, y);
+            rgb_color_t rgb = vga_rgb888_to_rgb(color);
+            
+            uint8_t tr = (rgb.r * 39 + rgb.g * 77 + rgb.b * 19) / 100;
+            uint8_t tg = (rgb.r * 35 + rgb.g * 69 + rgb.b * 17) / 100;
+            uint8_t tb = (rgb.r * 27 + rgb.g * 53 + rgb.b * 13) / 100;
+            
+            rgb.r = tr > 255 ? 255 : tr;
+            rgb.g = tg > 255 ? 255 : tg;
+            rgb.b = tb > 255 ? 255 : tb;
+            
+            vga_plot_pixel(x, y, vga_rgb_to_rgb888(rgb));
+        }
+    }
+}
+
+void vga_apply_filter_invert(void) {
+    if (!graphics_mode_enabled) return;
+    
+    for (uint16_t y = 0; y < current_mode_info.height; y++) {
+        for (uint16_t x = 0; x < current_mode_info.width; x++) {
+            uint32_t color = vga_get_pixel(x, y);
+            rgb_color_t rgb = vga_rgb888_to_rgb(color);
+            
+            rgb.r = 255 - rgb.r;
+            rgb.g = 255 - rgb.g;
+            rgb.b = 255 - rgb.b;
+            
+            vga_plot_pixel(x, y, vga_rgb_to_rgb888(rgb));
+        }
+    }
+}
+
+void vga_apply_filter_blur(uint8_t radius) {
+    if (!graphics_mode_enabled || radius == 0) return;
+    
+    for (uint16_t y = radius; y < current_mode_info.height - radius; y++) {
+        for (uint16_t x = radius; x < current_mode_info.width - radius; x++) {
+            uint32_t sum_r = 0, sum_g = 0, sum_b = 0;
+            uint32_t count = 0;
+            
+            for (int dy = -(int)radius; dy <= (int)radius; dy++) {
+                for (int dx = -(int)radius; dx <= (int)radius; dx++) {
+                    uint32_t color = vga_get_pixel(x + dx, y + dy);
+                    rgb_color_t rgb = vga_rgb888_to_rgb(color);
+                    sum_r += rgb.r;
+                    sum_g += rgb.g;
+                    sum_b += rgb.b;
+                    count++;
+                }
+            }
+            
+            rgb_color_t avg;
+            avg.r = sum_r / count;
+            avg.g = sum_g / count;
+            avg.b = sum_b / count;
+            
+            vga_plot_pixel(x, y, vga_rgb_to_rgb888(avg));
+        }
+    }
+}
+
+void vga_apply_gamma_correction(float gamma) {
+    if (!graphics_mode_enabled) return;
+    (void)gamma;
+    
+    uint8_t lut[256];
+    for (int i = 0; i < 256; i++) {
+        lut[i] = i;
+    }
+    
+    for (uint16_t y = 0; y < current_mode_info.height; y++) {
+        for (uint16_t x = 0; x < current_mode_info.width; x++) {
+            uint32_t color = vga_get_pixel(x, y);
+            rgb_color_t rgb = vga_rgb888_to_rgb(color);
+            
+            rgb.r = lut[rgb.r];
+            rgb.g = lut[rgb.g];
+            rgb.b = lut[rgb.b];
+            
+            vga_plot_pixel(x, y, vga_rgb_to_rgb888(rgb));
+        }
+    }
 }

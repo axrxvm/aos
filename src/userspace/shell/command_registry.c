@@ -31,6 +31,7 @@ extern void cmd_module_init_register(void);
 extern void register_security_commands(void);
 extern void cmd_module_network_register(void);
 extern void cmd_module_apm_register(void);
+extern void cmd_module_graphics_register(void);  
 
 // Module VM command execution (from kmodule_v2.c)
 extern int execute_module_vm_command(const char* cmd_name, const char* args);
@@ -76,6 +77,7 @@ void init_commands(void) {
     register_security_commands();  // v0.7.3
     cmd_module_network_register();  // v0.8.0
     cmd_module_apm_register();  // v0.8.5
+    cmd_module_graphics_register();  // v0.8.8 - Enhanced VGA driver
     
     char buf[12];
     serial_puts("Command system initialized with ");

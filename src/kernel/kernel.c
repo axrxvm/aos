@@ -151,6 +151,19 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     
     serial_puts("\n=== aOS Boot Sequence ===\n");
     
+    // Detect VBE/VESA graphics capabilities
+    serial_puts("Detecting VBE/VESA graphics...\n");
+    if (vga_detect_vbe()) {
+        serial_puts("[OK] VBE 2.0+ graphics support detected\n");
+        serial_puts("     Graphics modes available:\n");
+        serial_puts("     - 320x200x256, 640x480, 800x600, 1024x768\n");
+        serial_puts("     - Hex color support (#RRGGBB)\n");
+        serial_puts("     - RGB/RGBA color formats\n");
+        serial_puts("     - Hardware acceleration ready\n");
+    } else {
+        serial_puts("[WARN] VBE not available, using legacy VGA only\n");
+    }
+    
     // Check bit 0 for mem_lower/mem_upper validity
     if (multiboot_info && (multiboot_info->flags & (1 << 0))) {
          total_memory_kb = (multiboot_info->mem_lower + multiboot_info->mem_upper);

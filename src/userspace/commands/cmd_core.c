@@ -62,9 +62,10 @@ static void cmd_help(const char* args) {
         "Modules",
         "Partition",
         "Init",
+        "Graphics",
         "General"
     };
-    uint32_t num_categories = 12;
+    uint32_t num_categories = 13;
     
     // Check if user wants a specific category
     if (args && *args) {

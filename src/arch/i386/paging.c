@@ -420,3 +420,27 @@ void identity_map_range(page_directory_t *dir, uint32_t start, uint32_t end, uin
         map_page(dir, addr, addr, flags);
     }
 }
+
+// Remap VGA buffer - useful after mode switches that may affect memory mapping
+void remap_vga_buffer(void) {
+    if (!kernel_directory) {
+        serial_puts("WARNING: remap_vga_buffer - kernel_directory is NULL\n");
+        return;
+    }
+    
+    serial_puts("Remapping VGA text buffer at 0xB8000...\n");
+    
+    // Unmap the existing VGA buffer mapping
+    unmap_page(kernel_directory, 0xB8000);
+    
+    // Flush TLB for this page
+    flush_tlb_single(0xB8000);
+    
+    // Remap with proper flags
+    map_page(kernel_directory, 0xB8000, 0xB8000, PAGE_PRESENT | PAGE_WRITE);
+    
+    // Flush TLB again to ensure new mapping is loaded
+    flush_tlb_single(0xB8000);
+    
+    serial_puts("VGA buffer remapped successfully\n");
+}

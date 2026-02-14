@@ -79,6 +79,13 @@ void unmap_page(page_directory_t *dir, uint32_t virtual_addr);
 uint32_t get_physical_address(page_directory_t *dir, uint32_t virtual_addr);
 int is_page_present(page_directory_t *dir, uint32_t virtual_addr);
 
+// TLB management
+void flush_tlb_single(uint32_t virtual_addr);
+void flush_tlb_full(void);
+
+// VGA buffer remapping
+void remap_vga_buffer(void);
+
 // Page fault handler
 void page_fault_handler(registers_t *regs);
 

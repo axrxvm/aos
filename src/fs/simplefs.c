@@ -111,13 +111,13 @@ static uint32_t calculate_checksum(const uint8_t* data, uint32_t size) {
 
 static int read_block(simplefs_data_t* fs_data, uint32_t block_num, void* buffer) {
     if (!fs_data || !buffer) {
-        serial_puts("SimpleFS: read_block - null pointer\n");
+        // serial_puts("SimpleFS: read_block - null pointer\n");
         return -1;
     }
     
     // Validate block_num after superblock is initialized
     if (fs_data->superblock.magic == SIMPLEFS_MAGIC && block_num >= fs_data->superblock.total_blocks) {
-        serial_puts("SimpleFS: read_block - block out of bounds\n");
+        // serial_puts("SimpleFS: read_block - block out of bounds\n");
         return -1;
     }
     
@@ -129,13 +129,13 @@ static int read_block(simplefs_data_t* fs_data, uint32_t block_num, void* buffer
 
 static int write_block(simplefs_data_t* fs_data, uint32_t block_num, const void* buffer) {
     if (!fs_data || !buffer) {
-        serial_puts("SimpleFS: write_block - null pointer\n");
+        // serial_puts("SimpleFS: write_block - null pointer\n");
         return -1;
     }
     
     // Validate block_num after superblock is initialized
     if (fs_data->superblock.magic == SIMPLEFS_MAGIC && block_num >= fs_data->superblock.total_blocks) {
-        serial_puts("SimpleFS: write_block - block out of bounds\n");
+        // serial_puts("SimpleFS: write_block - block out of bounds\n");
         return -1;
     }
     
@@ -144,27 +144,27 @@ static int write_block(simplefs_data_t* fs_data, uint32_t block_num, const void*
     uint32_t lba = fs_data->start_lba + block_num;
     int result = ata_write_sectors(lba, 1, (const uint8_t*)buffer);
     if (result != 0) {
-        serial_puts("SimpleFS: write_block failed for block ");
-        char buf[32];
-        itoa(block_num, buf, 10);
-        serial_puts(buf);
-        serial_puts(" (LBA ");
-        itoa(lba, buf, 10);
-        serial_puts(buf);
-        serial_puts(")\n");
+        // serial_puts("SimpleFS: write_block failed for block ");
+        // char buf[32];
+        // itoa(block_num, buf, 10);
+        // serial_puts(buf);
+        // serial_puts(" (LBA ");
+        // itoa(lba, buf, 10);
+        // serial_puts(buf);
+        // serial_puts(")\n");
     }
     return result;
 }
 
 static uint32_t alloc_block(simplefs_data_t* fs_data) {
     if (!fs_data || !fs_data->block_bitmap) {
-        serial_puts("SimpleFS: alloc_block - null pointer\n");
+        // serial_puts("SimpleFS: alloc_block - null pointer\n");
         return 0;
     }
     
     // Check if we have free blocks
     if (fs_data->superblock.free_blocks == 0) {
-        serial_puts("SimpleFS: No free blocks available\n");
+        // serial_puts("SimpleFS: No free blocks available\n");
         return 0;
     }
     
@@ -199,12 +199,12 @@ static uint32_t alloc_block(simplefs_data_t* fs_data) {
 static void free_block(simplefs_data_t* fs_data, uint32_t block_num) __attribute__((unused));
 static void free_block(simplefs_data_t* fs_data, uint32_t block_num) {
     if (!fs_data || !fs_data->block_bitmap) {
-        serial_puts("SimpleFS: free_block - null pointer\n");
+        // serial_puts("SimpleFS: free_block - null pointer\n");
         return;
     }
     
     if (block_num < fs_data->superblock.first_data_block || block_num >= fs_data->superblock.total_blocks) {
-        serial_puts("SimpleFS: free_block - invalid block number\n");
+        // serial_puts("SimpleFS: free_block - invalid block number\n");
         return;
     }
     
@@ -223,7 +223,7 @@ static void free_block(simplefs_data_t* fs_data, uint32_t block_num) {
 // Handles direct, indirect, and double indirect blocks
 static uint32_t get_file_block(simplefs_data_t* fs_data, simplefs_inode_t* inode, uint32_t block_idx) {
     if (!fs_data || !inode) {
-        serial_puts("SimpleFS: get_file_block - null pointer\n");
+        // serial_puts("SimpleFS: get_file_block - null pointer\n");
         return 0;
     }
     
@@ -232,7 +232,7 @@ static uint32_t get_file_block(simplefs_data_t* fs_data, simplefs_inode_t* inode
         uint32_t block_num = inode->block_ptrs[block_idx];
         // Validate block number
         if (block_num > 0 && block_num >= fs_data->superblock.total_blocks) {
-            serial_puts("SimpleFS: Invalid direct block pointer\n");
+            // serial_puts("SimpleFS: Invalid direct block pointer\n");
             return 0;
         }
         return block_num;
@@ -366,15 +366,15 @@ static int set_file_block(simplefs_data_t* fs_data, simplefs_inode_t* inode, uin
 }
 
 static uint32_t alloc_inode(simplefs_data_t* fs_data) {
-    serial_puts("alloc_inode: searching for free inode...\n");
+    // serial_puts("alloc_inode: searching for free inode...\n");
     char buf[32];
-    serial_puts("alloc_inode: total_inodes=");
-    itoa(fs_data->superblock.total_inodes, buf, 10);
-    serial_puts(buf);
-    serial_puts(", free_inodes=");
-    itoa(fs_data->superblock.free_inodes, buf, 10);
-    serial_puts(buf);
-    serial_puts("\n");
+    // serial_puts("alloc_inode: total_inodes=");
+    // itoa(fs_data->superblock.total_inodes, buf, 10);
+    // serial_puts(buf);
+    // serial_puts(", free_inodes=");
+    // itoa(fs_data->superblock.free_inodes, buf, 10);
+    // serial_puts(buf);
+    // serial_puts("\n");
     
     // Find free inode in bitmap
     for (uint32_t i = 1; i < fs_data->superblock.total_inodes; i++) { // Start from 1, 0 is reserved
@@ -383,10 +383,10 @@ static uint32_t alloc_inode(simplefs_data_t* fs_data) {
         
         if (!(fs_data->inode_bitmap[byte_idx] & (1 << bit_idx))) {
             // Found free inode
-            serial_puts("alloc_inode: found free inode ");
-            itoa(i, buf, 10);
-            serial_puts(buf);
-            serial_puts("\n");
+            // serial_puts("alloc_inode: found free inode ");
+            // itoa(i, buf, 10);
+            // serial_puts(buf);
+            // serial_puts("\n");
             
             // Mark as allocated
             fs_data->inode_bitmap[byte_idx] |= (1 << bit_idx);
@@ -406,7 +406,7 @@ static uint32_t alloc_inode(simplefs_data_t* fs_data) {
         }
     }
     
-    serial_puts("alloc_inode: NO FREE INODES FOUND!\n");
+    // serial_puts("alloc_inode: NO FREE INODES FOUND!\n");
     return 0; // No free inodes
 }
 
@@ -601,10 +601,10 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     (void)source;
     (void)flags;
     
-    serial_puts("SimpleFS: Mounting filesystem...\n");
+    // serial_puts("SimpleFS: Mounting filesystem...\n");
     
     if (!ata_drive_available()) {
-        serial_puts("SimpleFS: No ATA drive available\n");
+        // serial_puts("SimpleFS: No ATA drive available\n");
         return VFS_ERR_IO;
     }
     
@@ -619,30 +619,30 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     
     // Read superblock
     if (read_block(fs_data, 0, &fs_data->superblock) != 0) {
-        serial_puts("SimpleFS: Failed to read superblock\n");
+        // serial_puts("SimpleFS: Failed to read superblock\n");
         kfree(fs_data);
         return VFS_ERR_IO;
     }
     
     // Verify magic number
     if (fs_data->superblock.magic != SIMPLEFS_MAGIC) {
-        serial_puts("SimpleFS: Invalid magic number\n");
+        // serial_puts("SimpleFS: Invalid magic number\n");
         kfree(fs_data);
         return VFS_ERR_INVALID;
     }
     
     // Verify version
     if (fs_data->superblock.version != SIMPLEFS_VERSION) {
-        serial_puts("SimpleFS: Unsupported version\n");
+        // serial_puts("SimpleFS: Unsupported version\n");
         kfree(fs_data);
         return VFS_ERR_INVALID;
     }
     
-    serial_puts("SimpleFS: Valid superblock found (version ");
-    char buf[16];
-    itoa(fs_data->superblock.version, buf, 10);
-    serial_puts(buf);
-    serial_puts(")\n");
+    // serial_puts("SimpleFS: Valid superblock found (version ");
+    // char buf[16];
+    // itoa(fs_data->superblock.version, buf, 10);
+    // serial_puts(buf);
+    // serial_puts(")\n");
     
     // Update mount information
     fs_data->superblock.mount_count++;
@@ -650,7 +650,7 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     
     // Check if journal recovery needed
     if (fs_data->superblock.state != SIMPLEFS_JOURNAL_CLEAN) {
-        serial_puts("SimpleFS: Filesystem not clean, recovery needed\n");
+        // serial_puts("SimpleFS: Filesystem not clean, recovery needed\n");
         fs_data->superblock.state = SIMPLEFS_JOURNAL_RECOVERING;
         write_block(fs_data, 0, &fs_data->superblock);
         
@@ -690,17 +690,17 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     uint32_t inodes_per_block = SIMPLEFS_BLOCK_SIZE / sizeof(simplefs_inode_t);
     uint32_t inode_blocks = (fs_data->superblock.total_inodes + inodes_per_block - 1) / inodes_per_block;
     
-    serial_puts("SimpleFS: Reading inode table, inodes_per_block=");
+    // serial_puts("SimpleFS: Reading inode table, inodes_per_block=");
     char tmp_buf[16];
-    itoa(inodes_per_block, tmp_buf, 10);
-    serial_puts(tmp_buf);
-    serial_puts(", inode_blocks=");
-    itoa(inode_blocks, tmp_buf, 10);
-    serial_puts(tmp_buf);
-    serial_puts(", sizeof(simplefs_inode_t)=");
-    itoa(sizeof(simplefs_inode_t), tmp_buf, 10);
-    serial_puts(tmp_buf);
-    serial_puts("\n");
+    // itoa(inodes_per_block, tmp_buf, 10);
+    // serial_puts(tmp_buf);
+    // serial_puts(", inode_blocks=");
+    // itoa(inode_blocks, tmp_buf, 10);
+    // serial_puts(tmp_buf);
+    // serial_puts(", sizeof(simplefs_inode_t)=");
+    // itoa(sizeof(simplefs_inode_t), tmp_buf, 10);
+    // serial_puts(tmp_buf);
+    // serial_puts("\n");
     
     // Read all inode blocks
     // Note: Unwritten blocks will return zeros from disk (standard behavior)
@@ -710,7 +710,7 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
         
         if (read_result != 0 && i == 0) {
             // Only fail if we can't read the critical first block
-            serial_puts("SimpleFS: Failed to read first inode block\n");
+            // serial_puts("SimpleFS: Failed to read first inode block\n");
             return VFS_ERR_IO;
         }
         
@@ -724,13 +724,13 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
         // Debug: Show first block's root inode data
         if (i == 0) {
             simplefs_inode_t* inode_0 = (simplefs_inode_t*)block;
-            serial_puts("SimpleFS: Loaded inode[0].mode=");
-            itoa(inode_0[0].mode, tmp_buf, 16);
-            serial_puts(tmp_buf);
-            serial_puts(", inode[1].mode=");
-            itoa(inode_0[1].mode, tmp_buf, 16);
-            serial_puts(tmp_buf);
-            serial_puts("\n");
+            // serial_puts("SimpleFS: Loaded inode[0].mode=");
+            // itoa(inode_0[0].mode, tmp_buf, 16);
+            // serial_puts(tmp_buf);
+            // serial_puts(", inode[1].mode=");
+            // itoa(inode_0[1].mode, tmp_buf, 16);
+            // serial_puts(tmp_buf);
+            // serial_puts("\n");
         }
     }
     
@@ -741,7 +741,7 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     
     fs->fs_data = fs_data;
     
-    serial_puts("SimpleFS mounted successfully.\n");
+    // serial_puts("SimpleFS mounted successfully.\n");
     return VFS_OK;
 }
 
@@ -780,11 +780,11 @@ static vnode_t* simplefs_get_root(filesystem_t* fs) {
     
     // Check if root inode is valid (should be a directory)
     if (root_inode->mode == 0 || !SIMPLEFS_ISDIR(root_inode->mode)) {
-        serial_puts("SimpleFS: Root inode is corrupted (mode=");
-        char buf[16];
-        itoa(root_inode->mode, buf, 16);
-        serial_puts(buf);
-        serial_puts("), filesystem is invalid\n");
+        // serial_puts("SimpleFS: Root inode is corrupted (mode=");
+        // char buf[16];
+        // itoa(root_inode->mode, buf, 16);
+        // serial_puts(buf);
+        // serial_puts("), filesystem is invalid\n");
         return NULL;
     }
     
@@ -862,7 +862,7 @@ static int simplefs_vnode_read(vnode_t* node, void* buffer, uint32_t size, uint3
 
 static int simplefs_vnode_write(vnode_t* node, const void* buffer, uint32_t size, uint32_t offset) {
     if (!node || !buffer) {
-        serial_puts("SimpleFS: write failed - null node or buffer\n");
+        // serial_puts("SimpleFS: write failed - null node or buffer\n");
         return VFS_ERR_INVALID;
     }
     
@@ -870,17 +870,17 @@ static int simplefs_vnode_write(vnode_t* node, const void* buffer, uint32_t size
     uint32_t inode_num = (uint32_t)node->fs_data;
     simplefs_inode_t* inode = &fs_data->inode_table[inode_num];
     
-    serial_puts("SimpleFS: Writing ");
-    char buf[32];
-    itoa(size, buf, 10);
-    serial_puts(buf);
-    serial_puts(" bytes at offset ");
-    itoa(offset, buf, 10);
-    serial_puts(buf);
-    serial_puts(" to inode ");
-    itoa(inode_num, buf, 10);
-    serial_puts(buf);
-    serial_puts("\n");
+    // serial_puts("SimpleFS: Writing ");
+    // char buf[32];
+    // itoa(size, buf, 10);
+    // serial_puts(buf);
+    // serial_puts(" bytes at offset ");
+    // itoa(offset, buf, 10);
+    // serial_puts(buf);
+    // serial_puts(" to inode ");
+    // itoa(inode_num, buf, 10);
+    // serial_puts(buf);
+    // serial_puts("\n");
     
     uint32_t bytes_written = 0;
     uint8_t block_buffer[SIMPLEFS_BLOCK_SIZE];
@@ -899,20 +899,20 @@ static int simplefs_vnode_write(vnode_t* node, const void* buffer, uint32_t size
         
         // Allocate block if necessary
         if (block_num == 0) {
-            serial_puts("SimpleFS: Allocating new block for index ");
-            itoa(block_idx, buf, 10);
-            serial_puts(buf);
-            serial_puts("\n");
+            // serial_puts("SimpleFS: Allocating new block for index ");
+            // itoa(block_idx, buf, 10);
+            // serial_puts(buf);
+            // serial_puts("\n");
             
             uint32_t new_block = alloc_block(fs_data);
             if (new_block == 0) {
-                serial_puts("SimpleFS: Failed to allocate block - no space\n");
+                // serial_puts("SimpleFS: Failed to allocate block - no space\n");
                 return bytes_written > 0 ? (int32_t)bytes_written : VFS_ERR_NOSPACE;
             }
             
             // Use new set_file_block function that handles indirect blocks
             if (set_file_block(fs_data, inode, block_idx, new_block, inode_num) != 0) {
-                serial_puts("SimpleFS: Failed to set file block\n");
+                // serial_puts("SimpleFS: Failed to set file block\n");
                 free_block_num(fs_data, new_block);
                 return bytes_written > 0 ? (int32_t)bytes_written : VFS_ERR_IO;
             }
@@ -920,34 +920,34 @@ static int simplefs_vnode_write(vnode_t* node, const void* buffer, uint32_t size
             block_num = new_block;
             inode->blocks++;
             
-            serial_puts("SimpleFS: Allocated block ");
-            itoa(new_block, buf, 10);
-            serial_puts(buf);
-            serial_puts("\n");
+            // serial_puts("SimpleFS: Allocated block ");
+            // itoa(new_block, buf, 10);
+            // serial_puts(buf);
+            // serial_puts("\n");
         }
         
         // Read-modify-write for partial blocks
         if (block_offset != 0 || bytes_in_block != SIMPLEFS_BLOCK_SIZE) {
-            serial_puts("SimpleFS: Reading block ");
-            itoa(block_num, buf, 10);
-            serial_puts(buf);
-            serial_puts(" for partial write\n");
+            // serial_puts("SimpleFS: Reading block ");
+            // itoa(block_num, buf, 10);
+            // serial_puts(buf);
+            // serial_puts(" for partial write\n");
             
             if (read_block(fs_data, block_num, block_buffer) != 0) {
-                serial_puts("SimpleFS: Failed to read block for partial write\n");
+                // serial_puts("SimpleFS: Failed to read block for partial write\n");
                 return bytes_written > 0 ? (int32_t)bytes_written : VFS_ERR_IO;
             }
         }
         
         memcpy(block_buffer + block_offset, (const uint8_t*)buffer + bytes_written, bytes_in_block);
         
-        serial_puts("SimpleFS: Writing block ");
-        itoa(block_num, buf, 10);
-        serial_puts(buf);
-        serial_puts("\n");
+        // serial_puts("SimpleFS: Writing block ");
+        // itoa(block_num, buf, 10);
+        // serial_puts(buf);
+        // serial_puts("\n");
         
         if (write_block(fs_data, block_num, block_buffer) != 0) {
-            serial_puts("SimpleFS: Failed to write block\n");
+            // serial_puts("SimpleFS: Failed to write block\n");
             return bytes_written > 0 ? (int32_t)bytes_written : VFS_ERR_IO;
         }
         
@@ -1008,31 +1008,31 @@ static vnode_t* simplefs_vnode_finddir(vnode_t* node, const char* name) {
 
 static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_t flags) {
     if (!parent || !name || parent->type != VFS_DIRECTORY) {
-        serial_puts("SimpleFS: create failed - invalid parent or name or not a directory\n");
+        // serial_puts("SimpleFS: create failed - invalid parent or name or not a directory\n");
         return NULL;
     }
     
     (void)flags; // TODO: Use flags for permissions
     
-    serial_puts("SimpleFS: Creating file '");
-    serial_puts(name);
-    serial_puts("'\n");
+    // serial_puts("SimpleFS: Creating file '");
+    // serial_puts(name);
+    // serial_puts("'\n");
     
     simplefs_data_t* fs_data = (simplefs_data_t*)parent->fs->fs_data;
     
     // Allocate new inode
-    serial_puts("SimpleFS: Allocating inode...\n");
+    // serial_puts("SimpleFS: Allocating inode...\n");
     uint32_t new_inode_num = alloc_inode(fs_data);
     if (new_inode_num == 0) {
-        serial_puts("SimpleFS: Failed to allocate inode\n");
+        // serial_puts("SimpleFS: Failed to allocate inode\n");
         return NULL;
     }
     
     char buf[16];
-    itoa(new_inode_num, buf, 10);
-    serial_puts("SimpleFS: Allocated inode ");
-    serial_puts(buf);
-    serial_puts("\n");
+    // itoa(new_inode_num, buf, 10);
+    // serial_puts("SimpleFS: Allocated inode ");
+    // serial_puts(buf);
+    // serial_puts("\n");
     
     // Initialize inode
     simplefs_inode_t* new_inode = &fs_data->inode_table[new_inode_num];
@@ -1069,10 +1069,10 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
     uint32_t parent_inode_num = (uint32_t)parent->fs_data;
     simplefs_inode_t* parent_inode = &fs_data->inode_table[parent_inode_num];
     
-    serial_puts("SimpleFS: Adding directory entry to parent inode ");
-    itoa(parent_inode_num, buf, 10);
-    serial_puts(buf);
-    serial_puts("\n");
+    // serial_puts("SimpleFS: Adding directory entry to parent inode ");
+    // itoa(parent_inode_num, buf, 10);
+    // serial_puts(buf);
+    // serial_puts("\n");
     
     // Find space for new directory entry
     uint8_t block_buffer[SIMPLEFS_BLOCK_SIZE];
@@ -1080,10 +1080,10 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
     for (uint32_t block_idx = 0; block_idx < SIMPLEFS_DIRECT_BLOCKS; block_idx++) {
         if (parent_inode->block_ptrs[block_idx] == 0) {
             // Allocate new block for directory
-            serial_puts("SimpleFS: Allocating new directory block\n");
+            // serial_puts("SimpleFS: Allocating new directory block\n");
             uint32_t new_block = alloc_block(fs_data);
             if (new_block == 0) {
-                serial_puts("SimpleFS: Failed to allocate directory block\n");
+                // serial_puts("SimpleFS: Failed to allocate directory block\n");
                 free_inode(fs_data, new_inode_num);
                 return NULL;
             }
@@ -1091,10 +1091,10 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
             parent_inode->blocks++;
             memset(block_buffer, 0, SIMPLEFS_BLOCK_SIZE);
             
-            serial_puts("SimpleFS: Allocated directory block ");
-            itoa(new_block, buf, 10);
-            serial_puts(buf);
-            serial_puts("\n");
+            // serial_puts("SimpleFS: Allocated directory block ");
+            // itoa(new_block, buf, 10);
+            // serial_puts(buf);
+            // serial_puts("\n");
         } else {
             read_block(fs_data, parent_inode->block_ptrs[block_idx], block_buffer);
         }
@@ -1106,10 +1106,10 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
             
             if (dirent->inode == 0) {
                 // Found free space
-                serial_puts("SimpleFS: Found free space at offset ");
-                itoa(offset, buf, 10);
-                serial_puts(buf);
-                serial_puts("\n");
+                // serial_puts("SimpleFS: Found free space at offset ");
+                // itoa(offset, buf, 10);
+                // serial_puts(buf);
+                // serial_puts("\n");
                 
                 dirent->inode = new_inode_num;
                 dirent->rec_len = sizeof(simplefs_dirent_t);
@@ -1118,11 +1118,11 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
                 strncpy(dirent->name, name, SIMPLEFS_MAX_FILENAME);
                 dirent->name[SIMPLEFS_MAX_FILENAME] = '\0';
                 
-                serial_puts("SimpleFS: Writing directory block\n");
+                // serial_puts("SimpleFS: Writing directory block\n");
                 write_block(fs_data, parent_inode->block_ptrs[block_idx], block_buffer);
                 write_inode(fs_data, parent_inode_num);
                 
-                serial_puts("SimpleFS: File created successfully\n");
+                // serial_puts("SimpleFS: File created successfully\n");
                 return simplefs_inode_to_vnode(fs_data, new_inode_num, name, parent->fs);
             }
             
@@ -1136,20 +1136,20 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
     }
     
     // No space for new entry
-    serial_puts("SimpleFS: No space for new directory entry\n");
+    // serial_puts("SimpleFS: No space for new directory entry\n");
     free_inode(fs_data, new_inode_num);
     return NULL;
 }
 
 static int simplefs_vnode_unlink(vnode_t* parent, const char* name) {
     if (!parent || !name || parent->type != VFS_DIRECTORY) {
-        serial_puts("SimpleFS: unlink failed - invalid parent or name\n");
+        // serial_puts("SimpleFS: unlink failed - invalid parent or name\n");
         return VFS_ERR_INVALID;
     }
     
-    serial_puts("SimpleFS: Unlinking '");
-    serial_puts(name);
-    serial_puts("'\n");
+    // serial_puts("SimpleFS: Unlinking '");
+    // serial_puts(name);
+    // serial_puts("'\n");
     
     simplefs_data_t* fs_data = (simplefs_data_t*)parent->fs->fs_data;
     uint32_t parent_inode_num = (uint32_t)parent->fs_data;
@@ -1183,18 +1183,18 @@ static int simplefs_vnode_unlink(vnode_t* parent, const char* name) {
                         if (read_block(fs_data, inode->block_ptrs[i], dir_block) == 0) {
                             simplefs_dirent_t* entry = (simplefs_dirent_t*)dir_block;
                             if (entry->inode != 0) {
-                                serial_puts("SimpleFS: Directory not empty\n");
+                                // serial_puts("SimpleFS: Directory not empty\n");
                                 return VFS_ERR_NOTEMPTY;
                             }
                         }
                     }
                 }
                 
-                serial_puts("SimpleFS: Freeing inode blocks\n");
+                // serial_puts("SimpleFS: Freeing inode blocks\n");
                 // Free all blocks used by the file/directory
                 free_inode_blocks(fs_data, inode_num);
                 
-                serial_puts("SimpleFS: Freeing inode\n");
+                // serial_puts("SimpleFS: Freeing inode\n");
                 // Free the inode
                 free_inode(fs_data, inode_num);
                 
@@ -1205,7 +1205,7 @@ static int simplefs_vnode_unlink(vnode_t* parent, const char* name) {
                 // Write back directory block
                 write_block(fs_data, parent_inode->block_ptrs[block_idx], block_buffer);
                 
-                serial_puts("SimpleFS: File deleted successfully\n");
+                // serial_puts("SimpleFS: File deleted successfully\n");
                 return VFS_OK;
             }
             
@@ -1213,7 +1213,7 @@ static int simplefs_vnode_unlink(vnode_t* parent, const char* name) {
         }
     }
     
-    serial_puts("SimpleFS: File not found\n");
+    // serial_puts("SimpleFS: File not found\n");
     return VFS_ERR_NOTFOUND;
 }
 
@@ -1394,12 +1394,12 @@ static int simplefs_vnode_stat(vnode_t* node, stat_t* stat) {
 // Public API
 
 void simplefs_init(void) {
-    serial_puts("Initializing SimpleFS driver...\n");
+    // serial_puts("Initializing SimpleFS driver...\n");
     
     // Register filesystem with VFS
     vfs_register_filesystem(&simplefs_filesystem);
     
-    serial_puts("SimpleFS driver initialized.\n");
+    // serial_puts("SimpleFS driver initialized.\n");
 }
 
 filesystem_t* simplefs_get_fs(void) {
@@ -1407,10 +1407,10 @@ filesystem_t* simplefs_get_fs(void) {
 }
 
 int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
-    serial_puts("Formatting disk with SimpleFS v2...\n");
+    // serial_puts("Formatting disk with SimpleFS v2...\n");
     
     if (!ata_drive_available()) {
-        serial_puts("SimpleFS: No ATA drive available for formatting\n");
+        // serial_puts("SimpleFS: No ATA drive available for formatting\n");
         return -1;
     }
     
@@ -1453,7 +1453,7 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
     
     // Write superblock
     if (ata_write_sectors(start_lba, 1, (const uint8_t*)&superblock) != 0) {
-        serial_puts("SimpleFS: Failed to write superblock\n");
+        // serial_puts("SimpleFS: Failed to write superblock\n");
         return -1;
     }
     
@@ -1496,21 +1496,21 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
     root_inode[1].triple_indirect_ptr = 0;
     
     // Debug: Show root inode data before writing
-    serial_puts("SimpleFS format: Root inode mode=");
+    // serial_puts("SimpleFS format: Root inode mode=");
     char dbuf[16];
-    itoa(root_inode[1].mode, dbuf, 16);
-    serial_puts(dbuf);
-    serial_puts(", writing to LBA ");
-    itoa(start_lba + 3, dbuf, 10);
-    serial_puts(dbuf);
-    serial_puts("\n");
+    // itoa(root_inode[1].mode, dbuf, 16);
+    // serial_puts(dbuf);
+    // serial_puts(", writing to LBA ");
+    // itoa(start_lba + 3, dbuf, 10);
+    // serial_puts(dbuf);
+    // serial_puts("\n");
     
     // Write ONLY the first inode block (contains root directory)
     // Other inode blocks will be zero-initialized on demand when inodes are allocated
     // This dramatically speeds up formatting and reduces disk wear
     int write_result = ata_write_sectors(start_lba + 3, 1, inode_block);
     if (write_result != 0) {
-        serial_puts("SimpleFS format: FAILED to write root inode block!\n");
+        // serial_puts("SimpleFS format: FAILED to write root inode block!\n");
         return -1;
     }
     
@@ -1518,26 +1518,26 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
     uint8_t verify_block[SIMPLEFS_BLOCK_SIZE];
     if (ata_read_sectors(start_lba + 3, 1, verify_block) == 0) {
         simplefs_inode_t* verify_inode = (simplefs_inode_t*)verify_block;
-        serial_puts("SimpleFS format: Verified inode[1].mode=");
-        itoa(verify_inode[1].mode, dbuf, 16);
-        serial_puts(dbuf);
-        serial_puts("\n");
+        // serial_puts("SimpleFS format: Verified inode[1].mode=");
+        // itoa(verify_inode[1].mode, dbuf, 16);
+        // serial_puts(dbuf);
+        // serial_puts("\n");
         
         if (verify_inode[1].mode != root_inode[1].mode) {
-            serial_puts("SimpleFS format: Verification MISMATCH!\n");
+            // serial_puts("SimpleFS format: Verification MISMATCH!\n");
             return -1;
         }
     } else {
-        serial_puts("SimpleFS format: Verification read failed\n");
+        // serial_puts("SimpleFS format: Verification read failed\n");
         return -1;
     }
     
     // Note: We skip writing remaining inode blocks - they're implicitly zero
     // The inode bitmap tracks allocation, so unallocated inodes don't need to exist on disk
-    serial_puts("SimpleFS format: Skipping pre-initialization of ");
-    itoa(inode_blocks - 1, dbuf, 10);
-    serial_puts(dbuf);
-    serial_puts(" empty inode blocks (lazy allocation)\n");
+    // serial_puts("SimpleFS format: Skipping pre-initialization of ");
+    // itoa(inode_blocks - 1, dbuf, 10);
+    // serial_puts(dbuf);
+    // serial_puts(" empty inode blocks (lazy allocation)\n");
 
     // Initialize journal (optimized: batch write)
     // Write all journal blocks at once if possible
@@ -1563,18 +1563,18 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
         }
     }
     
-    serial_puts("SimpleFS v2 format complete.\n");
-    serial_puts("  Total blocks: ");
+    // serial_puts("SimpleFS v2 format complete.\n");
+    // serial_puts("  Total blocks: ");
     char buf[16];
-    itoa(num_blocks, buf, 10);
-    serial_puts(buf);
-    serial_puts("\n  Total inodes: ");
-    itoa(SIMPLEFS_MAX_INODES, buf, 10);
-    serial_puts(buf);
-    serial_puts("\n  Journal size: ");
-    itoa(superblock.journal_size, buf, 10);
-    serial_puts(buf);
-    serial_puts(" blocks\n");
+    // itoa(num_blocks, buf, 10);
+    // serial_puts(buf);
+    // serial_puts("\n  Total inodes: ");
+    // itoa(SIMPLEFS_MAX_INODES, buf, 10);
+    // serial_puts(buf);
+    // serial_puts("\n  Journal size: ");
+    // itoa(superblock.journal_size, buf, 10);
+    // serial_puts(buf);
+    // serial_puts(" blocks\n");
     
     return 0;
 }
@@ -1587,7 +1587,7 @@ int simplefs_symlink(const char* target, const char* linkpath) {
     // and store the target path in the file data
     (void)target;
     (void)linkpath;
-    serial_puts("SimpleFS: symlink not yet implemented\n");
+    // serial_puts("SimpleFS: symlink not yet implemented\n");
     return -1;
 }
 
@@ -1597,7 +1597,7 @@ int simplefs_readlink(const char* path, char* buf, uint32_t bufsize) {
     (void)path;
     (void)buf;
     (void)bufsize;
-    serial_puts("SimpleFS: readlink not yet implemented\n");
+    // serial_puts("SimpleFS: readlink not yet implemented\n");
     return -1;
 }
 
@@ -1606,7 +1606,7 @@ int simplefs_chmod(const char* path, uint16_t mode) {
     // This would update the mode field of an inode
     (void)path;
     (void)mode;
-    serial_puts("SimpleFS: chmod not yet implemented\n");
+    // serial_puts("SimpleFS: chmod not yet implemented\n");
     return -1;
 }
 
@@ -1616,7 +1616,7 @@ int simplefs_chown(const char* path, uint16_t uid, uint16_t gid) {
     (void)path;
     (void)uid;
     (void)gid;
-    serial_puts("SimpleFS: chown not yet implemented\n");
+    // serial_puts("SimpleFS: chown not yet implemented\n");
     return -1;
 }
 
@@ -1627,7 +1627,7 @@ int simplefs_setxattr(const char* path, const char* name, const void* value, uin
     (void)name;
     (void)value;
     (void)size;
-    serial_puts("SimpleFS: setxattr not yet implemented\n");
+    // serial_puts("SimpleFS: setxattr not yet implemented\n");
     return -1;
 }
 
@@ -1637,7 +1637,7 @@ int simplefs_getxattr(const char* path, const char* name, void* value, uint32_t 
     (void)name;
     (void)value;
     (void)size;
-    serial_puts("SimpleFS: getxattr not yet implemented\n");
+    // serial_puts("SimpleFS: getxattr not yet implemented\n");
     return -1;
 }
 
@@ -1673,7 +1673,7 @@ int simplefs_journal_recover(simplefs_data_t* fs_data) {
         return -1;
     }
     
-    serial_puts("SimpleFS: Journal recovery started\n");
+    // serial_puts("SimpleFS: Journal recovery started\n");
     
     // Read journal entries and replay them
     simplefs_journal_entry_t entry;
@@ -1690,13 +1690,13 @@ int simplefs_journal_recover(simplefs_data_t* fs_data) {
         // Verify checksum
         uint32_t checksum = calculate_checksum(entry.data, SIMPLEFS_BLOCK_SIZE - 12);
         if (checksum != entry.checksum) {
-            serial_puts("SimpleFS: Journal entry checksum mismatch, skipping\n");
+            // serial_puts("SimpleFS: Journal entry checksum mismatch, skipping\n");
             continue;
         }
         
         // Replay the write
         if (write_block(fs_data, entry.block_num, entry.data) != 0) {
-            serial_puts("SimpleFS: Failed to replay journal entry\n");
+            // serial_puts("SimpleFS: Failed to replay journal entry\n");
             return -1;
         }
     }
@@ -1708,6 +1708,6 @@ int simplefs_journal_recover(simplefs_data_t* fs_data) {
         write_block(fs_data, fs_data->superblock.journal_block + i, zero_block);
     }
     
-    serial_puts("SimpleFS: Journal recovery complete\n");
+    // serial_puts("SimpleFS: Journal recovery complete\n");
     return 0;
 }
