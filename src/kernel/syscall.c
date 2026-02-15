@@ -24,6 +24,8 @@
 #include <crypto/sha256.h>
 #include <fs_layout.h>
 #include <dev/mouse.h>
+#include <acpi.h>
+#include <stdlib.h>
 
 // Forward declaration for process functions
 extern void process_exit(int status);
@@ -35,6 +37,53 @@ extern int process_execve(const char* path, char* const argv[], char* const envp
 extern void* process_sbrk(int increment);
 extern void process_sleep(uint32_t milliseconds);
 extern void process_yield(void);
+extern volatile uint32_t shutdown_scheduled_tick;
+extern volatile uint32_t shutdown_message_last_tick;
+extern void kprint(const char *str);
+
+static void syscall_check_scheduled_shutdown(void) {
+    if (shutdown_scheduled_tick == 0) {
+        return;
+    }
+
+    uint32_t now_ticks = arch_timer_get_ticks();
+    uint32_t pit_freq_hz = arch_timer_get_frequency();
+    if (pit_freq_hz == 0) {
+        pit_freq_hz = 100;
+    }
+
+    if (now_ticks >= shutdown_scheduled_tick) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        kprint("");
+        kprint("System is going down for poweroff NOW!");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        acpi_shutdown();
+        return;
+    }
+
+    uint32_t remaining_ticks = shutdown_scheduled_tick - now_ticks;
+    uint32_t remaining_seconds = remaining_ticks / pit_freq_hz;
+    uint32_t current_second = now_ticks / pit_freq_hz;
+    uint32_t last_message_second = shutdown_message_last_tick / pit_freq_hz;
+
+    if (current_second != last_message_second) {
+        if (remaining_seconds == 60 || remaining_seconds == 30 || remaining_seconds == 10 ||
+            remaining_seconds == 5 || remaining_seconds == 4 || remaining_seconds == 3 ||
+            remaining_seconds == 2 || remaining_seconds == 1) {
+            vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+            vga_puts("\nShutdown in ");
+            char buf[16];
+            itoa(remaining_seconds, buf, 10);
+            vga_puts(buf);
+            vga_puts(" second");
+            if (remaining_seconds != 1) vga_puts("s");
+            vga_puts("...");
+            vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+            kprint("");
+            shutdown_message_last_tick = now_ticks;
+        }
+    }
+}
 
 // System call table
 typedef int (*syscall_handler_t)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
@@ -147,12 +196,14 @@ static int syscall_putchar(uint32_t ch, uint32_t b, uint32_t c, uint32_t d, uint
 
 static int syscall_getchar(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
-    // Blocking keyboard read — busy-poll.
-    // We do NOT enable interrupts here because the timer's scheduler_tick()
-    // can call schedule() + switch_context() which would corrupt our return
-    // path (we're inside the INT 0x80 handler). Polling with cli is safe
-    // since the keyboard controller buffers scancodes for us.
+    // INT 0x80 entry runs with IF cleared in this kernel; re-enable IRQs here
+    // so PIT timekeeping continues while waiting for user input.
+    __asm__ volatile ("sti");
+
+    // Blocking keyboard read.
     while (1) {
+        syscall_check_scheduled_shutdown();
+
         // Poll mouse for scroll wheel events while waiting for keyboard input
         mouse_poll();
         if (mouse_has_data()) {
@@ -177,7 +228,8 @@ static int syscall_getchar(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint3
                 return result;
             }
         }
-        __asm__ volatile ("pause");
+        // Wait for next interrupt instead of burning CPU in a tight loop.
+        __asm__ volatile ("hlt");
     }
 }
 
@@ -496,11 +548,14 @@ void syscall_handler(void* regs_ptr) {
     
     // System call number in EAX, arguments in EBX, ECX, EDX, ESI, EDI
     uint32_t syscall_num = regs->eax;
+    int result = -1;
+
+    // Prevent scheduler-driven context switches while executing syscall code.
+    process_set_preempt_disabled(1);
     
     if (syscall_num >= SYSCALL_COUNT) {
         serial_puts("Invalid syscall number: ");
-        regs->eax = (uint32_t)-1;  // Return error
-        return;
+        goto out;
     }
     
     // Get current process and check sandbox permissions (v0.7.3)
@@ -509,24 +564,23 @@ void syscall_handler(void* regs_ptr) {
         // Check if syscall is allowed by sandbox filter
         if (!syscall_check_allowed(syscall_num, proc->sandbox.syscall_filter)) {
             serial_puts("Syscall blocked by sandbox: ");
-            regs->eax = (uint32_t)-1;  // Return error
-            return;
+            goto out;
         }
         
         // Check CPU time limit
         if (!resource_check_time(proc->pid)) {
             serial_puts("Process exceeded CPU time limit\n");
             process_exit(-1);
-            regs->eax = (uint32_t)-1;
-            return;
+            goto out;
         }
     }
     
     // Call the appropriate handler
     syscall_handler_t handler = syscall_table[syscall_num];
-    int result = handler(regs->ebx, regs->ecx, regs->edx, regs->esi, regs->edi);
+    result = handler(regs->ebx, regs->ecx, regs->edx, regs->esi, regs->edi);
     
-    // Return value in EAX
+out:
+    process_set_preempt_disabled(0);
     regs->eax = (uint32_t)result;
 }
 

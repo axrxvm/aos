@@ -286,11 +286,11 @@ char* vfs_normalize_path(const char* path) {
         uint32_t cwd_len = strlen(cwd_path);
         uint32_t path_len = strlen(path);
         
-        serial_puts("VFS: Normalizing relative path '");
-        serial_puts(path);
-        serial_puts("' with cwd='");
-        serial_puts(cwd_path);
-        serial_puts("'\n");
+      //  serial_puts("VFS: Normalizing relative path '");
+      //  serial_puts(path);
+      //  serial_puts("' with cwd='");
+      //  serial_puts(cwd_path);
+      //  serial_puts("'\n");
         
         if (cwd_len + path_len + 2 > 511) {
             kfree(result);

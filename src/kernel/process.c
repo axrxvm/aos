@@ -31,6 +31,7 @@ static process_t* ready_queue[5] = {NULL, NULL, NULL, NULL, NULL};
 
 // Ticks counter for scheduler
 static uint32_t scheduler_ticks = 0;
+static volatile uint32_t preempt_disable_depth = 0;
 
 // Time slice per priority (in ticks)
 static const uint32_t time_slices[5] = {
@@ -344,10 +345,24 @@ void scheduler_tick(void) {
         }
         
         if (current_process->time_slice == 0) {
-            // Time slice expired, reschedule
-            schedule();
+            // Time slice expired, reschedule unless kernel preemption is suppressed.
+            if (preempt_disable_depth == 0) {
+                schedule();
+            }
         }
     }
+}
+
+void process_set_preempt_disabled(int disabled) {
+    if (disabled) {
+        preempt_disable_depth++;
+    } else if (preempt_disable_depth > 0) {
+        preempt_disable_depth--;
+    }
+}
+
+int process_is_preempt_disabled(void) {
+    return preempt_disable_depth != 0;
 }
 
 // Main scheduler

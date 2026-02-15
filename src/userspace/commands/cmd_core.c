@@ -287,11 +287,16 @@ static void cmd_uptime(const char* args) {
     char buf[64];
     uint32_t current_ticks = arch_timer_get_ticks();
     uint32_t pit_freq_hz = arch_timer_get_frequency();
+    if (pit_freq_hz == 0) {
+        // Fallback for very early boot / unexpected init order.
+        pit_freq_hz = 100;
+    }
     uint32_t total_seconds = current_ticks / pit_freq_hz;
     uint32_t hours = total_seconds / 3600;
     uint32_t remainder_seconds = total_seconds % 3600;
     uint32_t minutes = remainder_seconds / 60;
     uint32_t seconds = remainder_seconds % 60;
+    uint32_t ms = ((current_ticks % pit_freq_hz) * 1000) / pit_freq_hz;
     
     vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
     vga_puts("System Uptime: ");
@@ -299,6 +304,13 @@ static void cmd_uptime(const char* args) {
     itoa(hours, buf, 10); vga_puts(buf); vga_puts("h ");
     itoa(minutes, buf, 10); vga_puts(buf); vga_puts("m ");
     itoa(seconds, buf, 10); vga_puts(buf); vga_puts("s");
+    if (current_ticks > 0 && total_seconds == 0) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
+        vga_puts(" (");
+        itoa(ms, buf, 10); vga_puts(buf);
+        vga_puts("ms)");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+    }
     vga_set_color(VGA_ATTR(VGA_COLOR_DARK_GREY, VGA_COLOR_BLACK));
     vga_puts(" (Total Ticks: ");
     itoa(current_ticks, buf, 10); vga_puts(buf); vga_puts(")");

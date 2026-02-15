@@ -280,9 +280,16 @@ void apm_init(void) {
     serial_puts("[APM] Initializing aOS Package Manager\n");
     
     // Ensure APM directories exist (use /sys/apm, not /dev/apm which gets overlaid by devfs)
-    vfs_mkdir("/sys");
-    vfs_mkdir("/sys/apm");
-    vfs_mkdir(APM_MODULE_DIR);
+    // Check if directories already exist to avoid recreating on each boot
+    if (!vfs_resolve_path("/sys")) {
+        vfs_mkdir("/sys");
+    }
+    if (!vfs_resolve_path("/sys/apm")) {
+        vfs_mkdir("/sys/apm");
+    }
+    if (!vfs_resolve_path(APM_MODULE_DIR)) {
+        vfs_mkdir(APM_MODULE_DIR);
+    }
     
     // Try to load cached list
     if (apm_load_local_list(&g_apm_repo) == 0) {

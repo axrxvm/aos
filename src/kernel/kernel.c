@@ -87,6 +87,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     // Initialize CPU-specific features (GDT, segment selectors, etc.)
     arch_cpu_init();
     serial_init(); // Initialize serial port early for status messages
+    serial_puts("Welcome - aOS Kernel - Version " AOS_VERSION_SHORT "\n");
     serial_puts("CPU Initialized (");
     serial_puts(arch_get_name());
     serial_puts(")\n");

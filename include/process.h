@@ -119,6 +119,8 @@ int process_for_each(int (*callback)(process_t* proc, void* ctx), void* ctx);
 // Scheduler
 void schedule(void);
 void scheduler_tick(void);
+void process_set_preempt_disabled(int disabled);
+int process_is_preempt_disabled(void);
 
 // Memory management
 void* process_sbrk(int increment);

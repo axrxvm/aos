@@ -21,6 +21,7 @@
 #include <version.h>
 #include <crypto/sha256.h>
 #include <fs_layout.h>
+#include <arch.h>
 #include <acpi.h>
 #include <io.h>
 
@@ -44,9 +45,6 @@ extern volatile uint32_t shutdown_scheduled_tick;
 extern volatile uint32_t shutdown_message_last_tick;
 extern void kprint(const char *str);
 extern int unformatted_disk_detected;
-
-#define PIT_BASE_FREQUENCY 1193182
-#define PIT_DEFAULT_DIVISOR 11932
 
 // Helper function to redraw the input line with proper cursor positioning
 static void redraw_input_line(void) {
@@ -948,7 +946,10 @@ void shell_check_scheduled_shutdown(void) {
         return; // No shutdown scheduled
     }
     
-    uint32_t pit_freq_hz = (PIT_DEFAULT_DIVISOR == 0) ? (PIT_BASE_FREQUENCY / 65536) : (PIT_BASE_FREQUENCY / PIT_DEFAULT_DIVISOR);
+    uint32_t pit_freq_hz = arch_timer_get_frequency();
+    if (pit_freq_hz == 0) {
+        pit_freq_hz = 100;
+    }
     
     // Calculate remaining time
     if (system_ticks >= shutdown_scheduled_tick) {
