@@ -667,58 +667,6 @@ void kfree(void *ptr) {
         return;
     }
     
-    // Try to free from slab caches
-    if (kernel_address_space) {
-        // Check if this is a slab allocation by examining the header
-        slab_obj_t *obj = ((slab_obj_t *)ptr) - 1;
-        
-        // Validate header is accessible
-        if ((uint32_t)obj < 0x100000) {
-            serial_puts("ERROR: kfree - slab header pointer invalid\n");
-            goto try_vma_free;
-        }
-        
-        // Check for double-free first
-        if (obj->magic_start == GUARD_MAGIC_FREED) {
-          //  serial_puts("ERROR: Double-free detected in slab allocator!\n");
-          //  char buf[16];
-          //  serial_puts("Address: 0x");
-          //  itoa(addr, buf, 16);
-          //  serial_puts(buf);
-          //  serial_puts("\n");
-          // Silently block double-free to avoid panicking during boot - just skip the free
-            return;
-        }
-        
-        // Verify if this looks like a slab object
-        if (obj->magic_start == GUARD_MAGIC_START) {
-            // Validate size is reasonable
-            if (obj->size == 0 || obj->size > SLAB_SIZE_2048) {
-                serial_puts("ERROR: kfree - corrupted slab object size\n");
-                return;
-            }
-            
-            // Find the appropriate cache
-            for (int i = 0; i < NUM_SLAB_CACHES; i++) {
-                if (obj->size == slab_sizes[i]) {
-                    // Mark as freed before actually freeing
-                    uint32_t saved_magic = obj->magic_start;
-                    obj->magic_start = GUARD_MAGIC_FREED;
-                    
-                    slab_free(&kernel_address_space->slab_caches[i], ptr);
-                    
-                    bytes_freed += obj->size;
-                    total_frees++;
-                    return;
-                }
-            }
-            
-            // Restore if we couldn't find the cache
-            serial_puts("WARNING: kfree - slab object with unknown cache\n");
-        }
-    }
-    
-try_vma_free:
     // For VMM-allocated memory, search for the VMA and free it
     if (kernel_address_space && kernel_address_space->vma_list) {
         // Align down to page boundary
@@ -749,6 +697,57 @@ try_vma_free:
         if (iterations >= 1000) {
             serial_puts("ERROR: VMA list corrupted (infinite loop detected)\n");
             return;
+        }
+    }
+
+    // Try to free from slab caches (only after VMA lookup to avoid reading
+    // before page-backed allocations where ptr-1 may be unmapped).
+    if (kernel_address_space) {
+        // Check if this is a slab allocation by examining the header
+        slab_obj_t *obj = ((slab_obj_t *)ptr) - 1;
+        
+        // Validate header is accessible
+        if ((uint32_t)obj < 0x100000) {
+            serial_puts("ERROR: kfree - slab header pointer invalid\n");
+            return;
+        }
+        
+        // Check for double-free first
+        if (obj->magic_start == GUARD_MAGIC_FREED) {
+          //  serial_puts("ERROR: Double-free detected in slab allocator!\n");
+          //  char buf[16];
+          //  serial_puts("Address: 0x");
+          //  itoa(addr, buf, 16);
+          //  serial_puts(buf);
+          //  serial_puts("\n");
+          // Silently block double-free to avoid panicking during boot - just skip the free
+            return;
+        }
+        
+        // Verify if this looks like a slab object
+        if (obj->magic_start == GUARD_MAGIC_START) {
+            // Validate size is reasonable
+            if (obj->size == 0 || obj->size > SLAB_SIZE_2048) {
+                serial_puts("ERROR: kfree - corrupted slab object size\n");
+                return;
+            }
+            
+            // Find the appropriate cache
+            for (int i = 0; i < NUM_SLAB_CACHES; i++) {
+                if (obj->size == slab_sizes[i]) {
+                    // Mark as freed before actually freeing
+                    obj->magic_start = GUARD_MAGIC_FREED;
+                    
+                    slab_free(&kernel_address_space->slab_caches[i], ptr);
+                    
+                    bytes_freed += obj->size;
+                    total_frees++;
+                    return;
+                }
+            }
+            
+            // Restore if we couldn't find the cache
+            serial_puts("WARNING: kfree - slab object with unknown cache\n");
         }
     }
     
