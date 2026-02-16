@@ -12,7 +12,7 @@
 #define PIT_H
 
 #include <stdint.h>
-#include <arch/i386/isr.h> // For registers_t type, needed for pit_handler signature.
+#include <arch/isr.h> // For registers_t type, needed for pit_handler signature.
 
 #define PIT_CHANNEL0_DATA   0x40    // PIT Channel 0 data port.
 #define PIT_COMMAND_REG     0x43    // PIT Command Register.

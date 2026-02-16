@@ -22,7 +22,7 @@
 #include <net/ethernet.h>
 #include <net/arp.h>
 #include <net/dhcp.h>
-#include <arch/i386/paging.h>
+#include <arch/paging.h>
 #include <io.h>
 #include <serial.h>
 #include <string.h>

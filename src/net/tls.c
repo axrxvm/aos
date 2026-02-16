@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <vmm.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 
 #define TLS_RECV_BUFFER_SIZE    16384
 #define TLS_MAX_RECORD_SIZE     16384

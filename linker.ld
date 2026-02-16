@@ -8,6 +8,7 @@ PHDRS {
 
 SECTIONS {
     . = 1M;
+    __kernel_start = .;
 
     /* Force multiboot header into its own loadable section first */
     .multiboot ALIGN(4) : AT(ADDR(.multiboot)) {
@@ -25,4 +26,6 @@ SECTIONS {
         *(.bss*)
         *(COMMON)
     } :data
+
+    __kernel_end = .;
 }

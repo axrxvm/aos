@@ -3,9 +3,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <io.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 #include <vmm.h>
-#include <arch/i386/paging.h>
+#include <arch/paging.h>
 #include <pmm.h>
 #include <stdint.h>
 #include <stddef.h>

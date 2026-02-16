@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <serial.h>
-#include <arch/i386/paging.h>
+#include <arch/paging.h>
 #include <multiboot.h>
 
 #define SCROLLBACK_LINES 100
@@ -831,8 +831,12 @@ static int vga_bios_int10(v86_regs_t* regs) {
     if (!regs) return -1;
     
     // Save current state
-    uint32_t saved_eflags;
+    uintptr_t saved_eflags;
+#if defined(ARCH_X86_64)
+    __asm__ volatile("pushfq; popq %0" : "=r"(saved_eflags));
+#else
     __asm__ volatile("pushf; pop %0" : "=r"(saved_eflags));
+#endif
     
     // For now, use a simplified approach: call BIOS directly if in real mode
     // In a full implementation, this would:

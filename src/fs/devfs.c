@@ -11,7 +11,7 @@
 #include <fs/devfs.h>
 #include <string.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <vmm.h>

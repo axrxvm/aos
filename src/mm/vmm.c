@@ -9,7 +9,7 @@
 
 
 #include <vmm.h>
-#include <arch/i386/paging.h>
+#include <arch/paging.h>
 #include <pmm.h>
 #include <serial.h>
 #include <vga.h>
@@ -63,6 +63,9 @@ static void init_slab_cache(slab_cache_t *cache, uint32_t obj_size);
 static void *slab_alloc(slab_cache_t *cache);
 static void slab_free(slab_cache_t *cache, void *ptr);
 static uint32_t calculate_checksum(void *ptr, size_t size);
+#ifdef ARCH_X86_64
+static int vmm_addr_in_vma(address_space_t *as, uint32_t addr);
+#endif
 
 // Simple checksum calculation for integrity checking
 static uint32_t calculate_checksum(void *ptr, size_t size) {
@@ -74,6 +77,23 @@ static uint32_t calculate_checksum(void *ptr, size_t size) {
     }
     return sum;
 }
+
+#ifdef ARCH_X86_64
+static int vmm_addr_in_vma(address_space_t *as, uint32_t addr) {
+    if (!as) {
+        return 0;
+    }
+
+    vma_t *vma = as->vma_list;
+    while (vma) {
+        if (addr >= vma->start_addr && addr < vma->end_addr) {
+            return 1;
+        }
+        vma = vma->next;
+    }
+    return 0;
+}
+#endif
 
 // Initialize a slab cache
 static void init_slab_cache(slab_cache_t *cache, uint32_t obj_size) {
@@ -364,6 +384,23 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
         
         // Check if already mapped
         if (is_page_present(as->page_dir, vaddr)) {
+#ifdef ARCH_X86_64
+            /*
+             * x86_64 boot tables may pre-map broad identity ranges that are not
+             * tracked as VMAs. Allow remap in that case, but never overwrite an
+             * address that is already owned by a tracked VMA allocation.
+             */
+            if (vmm_addr_in_vma(as, vaddr)) {
+                // Unmap what we've allocated so far
+                for (size_t j = 0; j < i; j++) {
+                    uint32_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
+                    uint32_t phys = get_physical_address(as->page_dir, unmap_addr);
+                    unmap_page(as->page_dir, unmap_addr);
+                    if (phys) free_page((void *)phys);
+                }
+                return 0;
+            }
+#else
             // Unmap what we've allocated so far
             for (size_t j = 0; j < i; j++) {
                 uint32_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
@@ -372,6 +409,7 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
                 if (phys) free_page((void *)phys);
             }
             return 0;
+#endif
         }
         
         // Allocate physical page
@@ -430,9 +468,22 @@ void *vmm_alloc_anywhere(address_space_t *as, size_t size, uint32_t flags) {
         
         // Check if this range is free
         for (size_t i = 0; i < num_pages; i++) {
-            if (is_page_present(as->page_dir, addr + (i * PAGE_SIZE))) {
+            uint32_t check_addr = addr + (i * PAGE_SIZE);
+            if (is_page_present(as->page_dir, check_addr)) {
+#ifdef ARCH_X86_64
+                /*
+                 * x86_64 bootstrap keeps broad identity mappings installed.
+                 * If the page is not owned by a tracked VMA, treat it as
+                 * remappable space for dynamic allocations.
+                 */
+                if (vmm_addr_in_vma(as, check_addr)) {
+                    free_space = 0;
+                    break;
+                }
+#else
                 free_space = 0;
                 break;
+#endif
             }
         }
         

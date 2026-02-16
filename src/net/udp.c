@@ -22,6 +22,7 @@ static uint16_t udp_next_ephemeral_port = 49152;
 
 // UDP socket table (dynamically allocated to avoid huge BSS)
 static udp_socket_t* udp_sockets = NULL;
+static udp_socket_t udp_sockets_fallback[MAX_UDP_SOCKETS];
 
 // UDP pseudo-header for checksum calculation
 typedef struct {
@@ -38,9 +39,8 @@ void udp_init(void) {
     // Allocate UDP sockets dynamically to avoid huge BSS section
     udp_sockets = (udp_socket_t*)kmalloc(sizeof(udp_socket_t) * MAX_UDP_SOCKETS);
     if (!udp_sockets) {
-        serial_puts("FATAL: Failed to allocate UDP socket table\n");
-        asm volatile("cli; hlt");
-        while(1);
+        serial_puts("WARNING: UDP socket table kmalloc failed, using static fallback\n");
+        udp_sockets = udp_sockets_fallback;
     }
     
     memset(udp_sockets, 0, sizeof(udp_socket_t) * MAX_UDP_SOCKETS);

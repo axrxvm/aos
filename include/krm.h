@@ -11,7 +11,7 @@
 #define KRM_H
 
 #include <stdint.h>
-#include <arch/i386/isr.h>
+#include <arch/isr.h>
 
 // Kernel Recovery Mode (KRM) - Standalone panic recovery system
 // KRM is completely independent of VFS, networking, and other aOS components

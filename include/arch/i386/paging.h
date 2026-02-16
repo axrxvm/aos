@@ -12,7 +12,7 @@
 #define ARCH_I386_PAGING_H
 
 #include <stdint.h>
-#include <arch/i386/isr.h>
+#include <arch/isr.h>
 
 // Page size is 4KB
 #define PAGE_SIZE 4096

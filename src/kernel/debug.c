@@ -23,23 +23,22 @@ void print_backtrace(uint32_t max_frames) {
     vga_puts("\nStack Backtrace:\n");
     serial_puts("\nStack Backtrace:\n");
 
-    uint32_t *ebp;
-    asm volatile ("mov %%ebp, %0" : "=r"(ebp));
+    uintptr_t* frame = (uintptr_t*)__builtin_frame_address(0);
 
     char buf[18]; // "  0x" + 8 hex digits + "\n" + null = 15 chars, 18 is safe
 
-    for (uint32_t frame = 0; ebp && frame < max_frames; ++frame) {
-        // Ensure ebp is readable and points to a valid stack region if possible.
+    for (uint32_t depth = 0; frame && depth < max_frames; ++depth) {
+        // Ensure frame pointer is readable and points to a valid stack region if possible.
         // This basic check doesn't validate the region but checks for NULL.
-        if (ebp < (uint32_t*)0x1000) { // Very basic sanity check, assumes kernel stack is higher
+        if ((uintptr_t)frame < (uintptr_t)0x1000) { // Very basic sanity check, assumes kernel stack is higher
             vga_puts("  (EBP seems invalid or too low: 0x");
-            itoa((uint32_t)ebp, buf, 10); vga_puts(buf); vga_puts(")\n");
+            itoa((uint32_t)(uintptr_t)frame, buf, 10); vga_puts(buf); vga_puts(")\n");
             serial_puts("  (EBP seems invalid or too low: 0x");
-            itoa((uint32_t)ebp, buf, 10); serial_puts(buf); serial_puts(")\n");
+            itoa((uint32_t)(uintptr_t)frame, buf, 10); serial_puts(buf); serial_puts(")\n");
             break;
         }
 
-        uint32_t eip = ebp[1]; // Return address is [ebp+4]
+        uint32_t eip = (uint32_t)frame[1];
         if (eip == 0) {
              vga_puts("  (Null EIP, end of trace?)\n");
              serial_puts("  (Null EIP, end of trace?)\n");
@@ -49,21 +48,21 @@ void print_backtrace(uint32_t max_frames) {
         vga_puts("  0x"); itoa(eip, buf, 10); vga_puts(buf); vga_puts("\n");
         serial_puts("  0x"); itoa(eip, buf, 10); serial_puts(buf); serial_puts("\n");
 
-        uint32_t prev_ebp_val = ebp[0];
-        if (prev_ebp_val == (uint32_t)ebp) { // Basic check for stack corruption or end of chain like ebp: ebp
+        uintptr_t prev_fp = frame[0];
+        if (prev_fp == (uintptr_t)frame) { // Basic check for stack corruption or end of chain like ebp: ebp
             vga_puts("  (Loop or end of chain: next EBP is current EBP: 0x");
-            itoa((uint32_t)ebp, buf, 10); vga_puts(buf); vga_puts(")\n");
+            itoa((uint32_t)(uintptr_t)frame, buf, 10); vga_puts(buf); vga_puts(")\n");
             serial_puts("  (Loop or end of chain: next EBP is current EBP: 0x");
-            itoa((uint32_t)ebp, buf, 10); serial_puts(buf); serial_puts(")\n");
+            itoa((uint32_t)(uintptr_t)frame, buf, 10); serial_puts(buf); serial_puts(")\n");
             break;
         }
-        if (prev_ebp_val < (uint32_t)ebp && frame > 0) { // Stack should grow downwards, so prev_ebp should be higher
-            vga_puts("  (Warning: next EBP 0x"); itoa(prev_ebp_val, buf, 10); vga_puts(buf);
-            vga_puts(" is lower than current EBP 0x"); itoa((uint32_t)ebp, buf, 10); vga_puts(buf); vga_puts(")\n");
+        if (prev_fp < (uintptr_t)frame && depth > 0) { // Stack should grow downwards, so prev_ebp should be higher
+            vga_puts("  (Warning: next EBP 0x"); itoa((uint32_t)prev_fp, buf, 10); vga_puts(buf);
+            vga_puts(" is lower than current EBP 0x"); itoa((uint32_t)(uintptr_t)frame, buf, 10); vga_puts(buf); vga_puts(")\n");
             serial_puts("  (Warning: next EBP is lower than current EBP)\n");
             // allow it to proceed, might be a special case or just one frame wrong.
         }
-        ebp = (uint32_t *)prev_ebp_val; // Go to the previous stack frame: ebp = [ebp]
+        frame = (uintptr_t*)prev_fp;
     }
     vga_puts("End of Backtrace.\n");
     serial_puts("End of Backtrace.\n");

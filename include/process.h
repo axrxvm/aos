@@ -12,7 +12,7 @@
 #define PROCESS_H
 
 #include <stdint.h>
-#include <arch/i386/paging.h>
+#include <arch/paging.h>
 #include <vmm.h>
 #include <sandbox.h>
 #include <fileperm.h>

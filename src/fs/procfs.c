@@ -12,7 +12,8 @@
 #include <string.h>
 #include <serial.h>
 #include <pmm.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
+#include <arch.h>
 #include <process.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -217,7 +218,7 @@ static int procfs_read_cpuinfo(void* buffer, uint32_t size, uint32_t offset) {
 
     uint32_t pit_hz = PIT_BASE_FREQUENCY / PIT_DEFAULT_DIVISOR;
     pos = append_kv_str(scratch, sizeof(scratch), pos, "machine", "aos-core");
-    pos = append_kv_str(scratch, sizeof(scratch), pos, "arch", "i386");
+    pos = append_kv_str(scratch, sizeof(scratch), pos, "arch", arch_get_name());
     pos = append_kv_num(scratch, sizeof(scratch), pos, "timer_hz", pit_hz);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "tick_counter", system_ticks);
 

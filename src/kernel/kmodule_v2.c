@@ -30,6 +30,7 @@
 #include <syscall.h>
 #include <stdlib.h>
 #include <process.h>
+#include <arch.h>
 
 // External memory info from kernel.c
 extern uint32_t total_memory_kb;
@@ -471,7 +472,7 @@ static int api_get_sysinfo(kmod_ctx_t* ctx, kmod_sysinfo_t* info) {
     info->cpu_count = 1;  // TODO: detect SMP
     info->module_count = v2_module_count;
     strncpy(info->kernel_name, "aOS", 31);
-    strncpy(info->arch, "i386", 15);
+    strncpy(info->arch, arch_get_name(), 15);
     info->uptime_ticks = 0;  // TODO: track uptime
     
     return 0;

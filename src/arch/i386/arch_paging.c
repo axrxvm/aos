@@ -8,8 +8,8 @@
  */
 
 #include <arch_paging.h>
-#include <arch/i386/paging.h>
-#include <arch/i386/isr.h>
+#include <arch/paging.h>
+#include <arch/isr.h>
 #include <memory.h>
 #include <vmm.h>
 #include <stdbool.h>

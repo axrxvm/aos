@@ -1,6 +1,8 @@
 # ==== Architecture Selection ====
 # Default architecture (can be overridden: make ARCH=i386)
 ARCH ?= i386
+ALL_ISO_ARCHES = i386 x86_64
+ARCH_EXPLICIT := $(filter command line environment,$(origin ARCH))
 
 # ==== Variables ====
 CC = gcc
@@ -8,21 +10,34 @@ AS = nasm
 LD = ld
 
 SRC_DIR = src
-BUILD_DIR = build
+BUILD_ROOT = build
+BUILD_DIR = $(BUILD_ROOT)/$(ARCH)
 INCLUDE_DIR = include
 OBJ_DIR = $(BUILD_DIR)/obj
+LINKER_SCRIPT = linker.ld
+GRUB_CFG = boot/grub/grub.cfg
+BUILD_AOSH = 1
+UBIN_LINKER_SCRIPT = ubin.ld
+AOSH_PAYLOAD_FORMAT = elf32-i386
+AOSH_PAYLOAD_ARCH = i386
 
 # Architecture-specific configuration
 ifeq ($(ARCH),i386)
-    ARCH_CFLAGS = -m32 -DARCH_I386 -DARCH_HAS_IO_PORTS -DARCH_HAS_SEGMENTATION
+    ARCH_CFLAGS = -m32 -DARCH_I386 -DARCH_HAS_IO_PORTS -DARCH_HAS_SEGMENTATION -fno-pic -fno-pie
     ARCH_ASFLAGS = -f elf32
     ARCH_LDFLAGS = -melf_i386
     QEMU_ARCH = i386
 else ifeq ($(ARCH),x86_64)
-    ARCH_CFLAGS = -m64 -DARCH_X86_64 -DARCH_HAS_IO_PORTS
+    ARCH_CFLAGS = -m64 -DARCH_X86_64 -DARCH_HAS_IO_PORTS -mno-red-zone -fno-pic -fno-pie -fcf-protection=none
     ARCH_ASFLAGS = -f elf64
     ARCH_LDFLAGS = -melf_x86_64
     QEMU_ARCH = x86_64
+    LINKER_SCRIPT = linker_x86_64.ld
+    GRUB_CFG = boot/grub/grub_x86_64.cfg
+    BUILD_AOSH = 1
+    UBIN_LINKER_SCRIPT = ubin_x86_64.ld
+    AOSH_PAYLOAD_FORMAT = elf64-x86-64
+    AOSH_PAYLOAD_ARCH = i386:x86-64
 else ifeq ($(ARCH),arm)
     ARCH_CFLAGS = -march=armv7-a -DARCH_ARM
     ARCH_ASFLAGS = -march=armv7-a
@@ -42,8 +57,12 @@ ASFLAGS = $(ARCH_ASFLAGS) -g
 LDFLAGS = $(ARCH_LDFLAGS) -n
 
 # Source File Discovery
-C_SOURCES = $(shell find $(SRC_DIR) -name '*.c')
-S_SOURCES = $(shell find $(SRC_DIR) -name '*.s')
+COMMON_C_SOURCES = $(shell find $(SRC_DIR) -name '*.c' ! -path '$(SRC_DIR)/arch/*')
+COMMON_S_SOURCES = $(shell find $(SRC_DIR) -name '*.s' ! -path '$(SRC_DIR)/arch/*')
+ARCH_C_SOURCES = $(shell find $(SRC_DIR)/arch/$(ARCH) -name '*.c' 2>/dev/null)
+ARCH_S_SOURCES = $(shell find $(SRC_DIR)/arch/$(ARCH) -name '*.s' 2>/dev/null)
+C_SOURCES = $(COMMON_C_SOURCES) $(ARCH_C_SOURCES)
+S_SOURCES = $(COMMON_S_SOURCES) $(ARCH_S_SOURCES)
 
 # Object File Generation
 C_OBJECTS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(C_SOURCES))
@@ -64,6 +83,14 @@ AOSH_OBJ = $(BUILD_DIR)/ubin/aosh.o
 AOSH_ELF = $(BUILD_DIR)/ubin/aosh.elf
 AOSH_BIN = $(BUILD_DIR)/ubin/aosh.bin
 AOSH_PAYLOAD = $(BUILD_DIR)/ubin/aosh_payload.o
+
+ifeq ($(BUILD_AOSH),1)
+KERNEL_EXTRA_DEPS = $(AOSH_PAYLOAD)
+KERNEL_EXTRA_OBJS = $(AOSH_PAYLOAD)
+else
+KERNEL_EXTRA_DEPS =
+KERNEL_EXTRA_OBJS =
+endif
 
 # ==== Targets ====
 
@@ -91,9 +118,9 @@ $(AOSH_OBJ): $(AOSH_SRC)
 	@mkdir -p $(dir $@)
 	$(CC) $(UBIN_CFLAGS) -c $< -o $@
 
-$(AOSH_ELF): $(AOSH_OBJ) ubin.ld
+$(AOSH_ELF): $(AOSH_OBJ) $(UBIN_LINKER_SCRIPT)
 	@echo "Linking userspace shell..."
-	$(LD) $(ARCH_LDFLAGS) -T ubin.ld -o $@ $(AOSH_OBJ)
+	$(LD) $(ARCH_LDFLAGS) -T $(UBIN_LINKER_SCRIPT) -o $@ $(AOSH_OBJ)
 
 $(AOSH_BIN): $(AOSH_ELF)
 	@echo "Creating userspace flat binary..."
@@ -101,52 +128,67 @@ $(AOSH_BIN): $(AOSH_ELF)
 
 $(AOSH_PAYLOAD): $(AOSH_BIN)
 	@echo "Embedding userspace binary in kernel..."
-	cd $(dir $<) && objcopy -I binary -O elf32-i386 -B i386 \
+	cd $(dir $<) && objcopy -I binary -O $(AOSH_PAYLOAD_FORMAT) -B $(AOSH_PAYLOAD_ARCH) \
 		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
 		$(notdir $<) $(notdir $@)
 
 # Link ELF (kernel + embedded userspace payload)
-$(KERNEL_ELF): linker.ld $(ALL_OBJECTS) $(AOSH_PAYLOAD)
+$(KERNEL_ELF): $(LINKER_SCRIPT) $(ALL_OBJECTS) $(KERNEL_EXTRA_DEPS)
 	@echo "Creating object file directories..."
 	@mkdir -p $(sort $(dir $(ALL_OBJECTS)))
 	@echo "Linking kernel ELF..."
-	$(LD) $(LDFLAGS) -T linker.ld -o $(KERNEL_ELF) $(ALL_OBJECTS) $(AOSH_PAYLOAD)
+	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $(KERNEL_ELF) $(ALL_OBJECTS) $(KERNEL_EXTRA_OBJS)
 
 # Create the ISO with the kernel and grub configuration
-iso: $(KERNEL_ELF) boot/grub/grub.cfg
+iso-arch: $(KERNEL_ELF) $(GRUB_CFG)
 	@echo "Creating ISO..."
 	mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_ELF) $(ISO_DIR)/boot/kernel.elf
-	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
+	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO) $(ISO_DIR)
 	@echo "ISO created at $(ISO)"
 
+iso-all:
+	@echo "ARCH not explicitly set. Building ISOs for: $(ALL_ISO_ARCHES)"
+	@set -e; \
+	for arch in $(ALL_ISO_ARCHES); do \
+		echo ""; \
+		echo "=== Building ISO for $$arch ==="; \
+		$(MAKE) ARCH=$$arch iso-arch; \
+	done
+
+ifneq ($(ARCH_EXPLICIT),)
+iso: iso-arch
+else
+iso: iso-all
+endif
+
 # Run the ISO using QEMU (graphical mode)
-run-vga: iso
+run-vga: iso-arch
 	@echo "Running in QEMU ($(ARCH))..."
 	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -enable-kvm 2>/dev/null || qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d
 	@echo "QEMU exited."
 
 # Run with VGA + serial logs
-run: iso
+run: iso-arch
 	@echo "Running in QEMU ($(ARCH)) with VGA + serial logs..."
 	@echo "Serial output will be saved to serial.log"
 	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -serial stdio | tee serial.log
 
 # Run serial-only (no graphics, pure console)
-run-nographic: iso
+run-nographic: iso-arch
 	@echo "Running in QEMU ($(ARCH), serial-only)..."
 	@echo "Serial output will be saved to serial.log"
-	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -nographic -serial stdio | tee serial.log
+	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -nographic | tee serial.log
 
 # Debug run with more verbose output
-run-debug: iso
+run-debug: iso-arch
 	@echo "Running in QEMU ($(ARCH)) with debugging..."
 	@echo "Serial output will be saved to serial.log"
 	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -serial stdio -d guest_errors,unimp | tee serial.log
 
 # Run with attached storage device (creates 1000MB disk image if not exists)
-run-s: iso
+run-s: iso-arch
 	@echo "Checking for disk image..."
 	@if [ ! -f $(DISK_IMG) ]; then \
 		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
@@ -160,7 +202,7 @@ run-s: iso
 	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -serial stdio -drive file=$(DISK_IMG),format=raw,index=0,media=disk | tee serial.log
 
 # Run with storage and networking enabled (e1000 NIC + TAP networking)
-run-sn: iso
+run-sn: iso-arch
 	@echo "Checking for disk image..."
 	@if [ ! -f $(DISK_IMG) ]; then \
 		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
@@ -179,11 +221,11 @@ run-sn: iso
 
 # Clean up the build directory
 clean:
-	rm -rf $(BUILD_DIR)
-	@echo "Cleaned up build directory."
+	rm -rf $(BUILD_ROOT)
+	@echo "Cleaned up build directories."
 
 # Run with user-mode networking (no sudo required, but limited)
-run-sn-user: iso
+run-sn-user: iso-arch
 	@echo "Checking for disk image..."
 	@if [ ! -f $(DISK_IMG) ]; then \
 		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
@@ -206,4 +248,4 @@ arch-info:
 	@echo "LDFLAGS: $(LDFLAGS)"
 
 # Phony targets
-.PHONY: all iso run run-nographic run-debug run-s run-sn run-sn-user clean arch-info
+.PHONY: all iso iso-arch iso-all run run-vga run-nographic run-debug run-s run-sn run-sn-user clean arch-info

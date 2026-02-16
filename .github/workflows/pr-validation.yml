@@ -155,8 +155,12 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
   size-check:
-    name: Binary Size Check
+    name: Binary Size Check (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [i386, x86_64]
     
     steps:
     - name: Checkout PR branch
@@ -168,19 +172,20 @@ jobs:
         sudo apt-get install -y gcc-multilib g++-multilib nasm \
           grub-pc-bin grub-common xorriso mtools
     
-    - name: Build PR version
-      run: make iso
+    - name: Build PR version (${{ matrix.arch }})
+      run: make ARCH=${{ matrix.arch }} iso
     
-    - name: Check ISO size
+    - name: Check ISO size (${{ matrix.arch }})
       run: |
-        PR_SIZE=$(stat -f%z build/aOS.iso 2>/dev/null || stat -c%s build/aOS.iso)
-        echo "PR ISO size: $(numfmt --to=iec-i --suffix=B $PR_SIZE)"
+        ISO_PATH="build/${{ matrix.arch }}/aOS.iso"
+        PR_SIZE=$(stat -f%z "$ISO_PATH" 2>/dev/null || stat -c%s "$ISO_PATH")
+        echo "PR ISO size (${{ matrix.arch }}): $(numfmt --to=iec-i --suffix=B $PR_SIZE)"
         
         # Warning if ISO is larger than 10MB
         if [ $PR_SIZE -gt 10485760 ]; then
-          echo "⚠️  ISO size exceeds 10MB - consider optimization"
+          echo "⚠️  ISO size exceeds 10MB for ${{ matrix.arch }} - consider optimization"
         else
-          echo "✓ ISO size is reasonable"
+          echo "✓ ISO size is reasonable for ${{ matrix.arch }}"
         fi
         
-        echo "pr_size=$PR_SIZE" >> $GITHUB_ENV
+        echo "pr_size_${{ matrix.arch }}=$PR_SIZE" >> $GITHUB_ENV

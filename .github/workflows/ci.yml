@@ -60,6 +60,36 @@ jobs:
           echo "✓ version.h exists"
         fi
 
+  arch-build-test:
+    name: Build Validation (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [i386, x86_64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          gcc-multilib \
+          g++-multilib \
+          nasm \
+          grub-pc-bin \
+          grub-common \
+          xorriso \
+          mtools
+
+    - name: Build ISO (${{ matrix.arch }})
+      run: make ARCH=${{ matrix.arch }} iso
+
+    - name: Verify artifact path
+      run: test -f build/${{ matrix.arch }}/aOS.iso
+
   security-scan:
     name: Security Analysis
     runs-on: ubuntu-latest
@@ -81,10 +111,20 @@ jobs:
     - name: Install build dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-multilib g++-multilib nasm xorriso mtools
-    
-    - name: Build for analysis
-      run: make iso
-    
+        sudo apt-get install -y \
+          gcc-multilib \
+          g++-multilib \
+          nasm \
+          grub-pc-bin \
+          grub-common \
+          xorriso \
+          mtools
+
+    - name: Build i386 for analysis
+      run: make ARCH=i386 iso
+
+    - name: Build x86_64 for analysis
+      run: make ARCH=x86_64 iso
+
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3

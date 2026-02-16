@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <vmm.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 #include <fs/vfs.h>
 
 void ftp_init(void) {

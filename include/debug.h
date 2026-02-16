@@ -14,7 +14,7 @@
 #include <stdint.h>
 // Forward declare registers_t to avoid direct include of isr.h if not always needed
 // However, panic_screen takes it, so it's better to include it.
-#include <arch/i386/isr.h> // For registers_t
+#include <arch/isr.h> // For registers_t
 
 // Dumps the current stack trace (call stack).
 void print_backtrace(uint32_t max_frames);

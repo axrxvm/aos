@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <vmm.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 
 #define MAX_TCP_SOCKETS 32
 #define TCP_RX_BUFFER_SIZE 16384

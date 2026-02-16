@@ -8,7 +8,7 @@
  */
 
 
-#include <arch/i386/isr.h>
+#include <arch/isr.h>
 #include <arch/i386/pic.h> // For pic_send_eoi() and PIC commands
 #include <serial.h>        // For printing debug messages
 #include <stdlib.h>        // For itoa()

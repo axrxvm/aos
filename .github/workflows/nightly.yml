@@ -8,8 +8,12 @@ on:
 
 jobs:
   nightly-build:
-    name: Nightly Build & Test
+    name: Nightly Build & Test (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [i386, x86_64]
     permissions:
       contents: read
       actions: write
@@ -31,38 +35,48 @@ jobs:
           mtools \
           qemu-system-x86
     
-    - name: Build kernel
-      run: make iso
+    - name: Build kernel (${{ matrix.arch }})
+      run: make ARCH=${{ matrix.arch }} iso
     
-    - name: Quick QEMU test
+    - name: Quick QEMU test (${{ matrix.arch }})
       timeout-minutes: 2
       run: |
-        # Start QEMU in background with timeout
-        timeout 30s qemu-system-i386 \
-          -cdrom build/aOS.iso \
-          -serial file:serial.log \
+        ISO_PATH="build/${{ matrix.arch }}/aOS.iso"
+        SERIAL_LOG="serial-${{ matrix.arch }}.log"
+        if [ "${{ matrix.arch }}" = "i386" ]; then
+          QEMU_BIN="qemu-system-i386"
+        else
+          QEMU_BIN="qemu-system-x86_64"
+        fi
+
+        timeout 30s "$QEMU_BIN" \
+          -cdrom "$ISO_PATH" \
+          -serial "file:${SERIAL_LOG}" \
           -display none \
           -m 128M \
           || true
         
-        # Check if kernel booted
-        if grep -q "aOS" serial.log; then
-          echo "✓ Kernel booted successfully"
-          cat serial.log
+        if grep -a -q "aOS" "$SERIAL_LOG"; then
+          echo "✓ Kernel booted successfully for ${{ matrix.arch }}"
+          cat "$SERIAL_LOG"
         else
-          echo "⚠️  Kernel boot verification incomplete"
-          cat serial.log
+          echo "⚠️  Kernel boot verification incomplete for ${{ matrix.arch }}"
+          cat "$SERIAL_LOG"
         fi
     
-    - name: Generate build report
+    - name: Generate build report (${{ matrix.arch }})
       run: |
-        ISO_SIZE=$(stat -c%s build/aOS.iso)
+        ISO_PATH="build/${{ matrix.arch }}/aOS.iso"
+        SERIAL_LOG="serial-${{ matrix.arch }}.log"
+        REPORT_PATH="build-report-${{ matrix.arch }}.txt"
+        ISO_SIZE=$(stat -c%s "$ISO_PATH")
         BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
         COMMIT_HASH=$(git rev-parse --short HEAD)
         
-        cat > build-report.txt << EOF
+        cat > "$REPORT_PATH" << EOF
         # aOS Nightly Build Report
         
+        - Architecture: ${{ matrix.arch }}
         - Build Date: $BUILD_DATE
         - Commit: $COMMIT_HASH
         - ISO Size: $(numfmt --to=iec-i --suffix=B $ISO_SIZE)
@@ -70,23 +84,24 @@ jobs:
         
         ## Serial Output
         \`\`\`
-        $(cat serial.log)
+        $(cat "$SERIAL_LOG")
         \`\`\`
         EOF
         
-        cat build-report.txt
+        cat "$REPORT_PATH"
     
-    - name: Upload nightly build
+    - name: Upload nightly build (${{ matrix.arch }})
       uses: actions/upload-artifact@v4
       with:
-        name: aos-nightly-${{ github.run_number }}
+        name: aos-nightly-${{ matrix.arch }}-${{ github.run_number }}
         path: |
-          build/aOS.iso
-          serial.log
-          build-report.txt
+          build/${{ matrix.arch }}/aOS.iso
+          serial-${{ matrix.arch }}.log
+          build-report-${{ matrix.arch }}.txt
         retention-days: 7
     
     - name: Cleanup old artifacts
+      if: matrix.arch == 'x86_64'
       uses: actions/github-script@v7
       with:
         script: |

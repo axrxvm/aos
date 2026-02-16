@@ -383,7 +383,9 @@ int shell_login(void) {
     vga_puts("                         Welcome to aOS v");
     vga_puts(AOS_VERSION_SHORT);
     vga_puts("\n");
-    vga_puts("                    A Modern i386 Operating System\n");
+    vga_puts("                  A Modern ");
+    vga_puts(arch_get_name());
+    vga_puts(" Operating System\n");
     vga_set_color(0x0F); // White
     vga_puts("\n");
     

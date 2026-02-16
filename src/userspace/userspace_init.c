@@ -68,8 +68,8 @@ void userspace_run(void) {
 
     extern process_t* process_get_current(void);
     extern void* vmm_alloc_at(address_space_t *as, uint32_t virtual_addr, size_t size, uint32_t flags);
-    extern void enter_usermode(uint32_t entry_point, uint32_t user_stack, int argc, char** argv);
     extern address_space_t* kernel_address_space;
+    extern void enter_usermode(uint32_t entry_point, uint32_t user_stack, int argc, char** argv);
 
     process_t* current = process_get_current();
     if (!current) {
@@ -98,8 +98,13 @@ void userspace_run(void) {
         return;
     }
 
+    uint32_t user_code_addr;
+    uint32_t stack_top;
+    uint32_t stack_pages;
+    uint32_t stack_base;
+
     /* --- Step 1: Allocate user code pages at 0x08048000 --- */
-    uint32_t user_code_addr = VMM_USER_CODE_START;  /* 0x08048000 */
+    user_code_addr = VMM_USER_CODE_START;  /* 0x08048000 */
     void* user_code = vmm_alloc_at(kernel_address_space, user_code_addr,
                                     code_alloc,
                                     VMM_PRESENT | VMM_WRITE | VMM_USER);
@@ -110,17 +115,27 @@ void userspace_run(void) {
     }
 
     /* --- Step 2: Copy the shell binary --- */
-    memcpy((void*)user_code_addr, _binary_aosh_bin_start, bin_size);
+    memset((void*)(uintptr_t)user_code_addr, 0, code_alloc);
+    memcpy((void*)(uintptr_t)user_code_addr, _binary_aosh_bin_start, bin_size);
     serial_puts("Shell binary copied to user pages.\n");
 
-    /* --- Step 3: Allocate user stack (16 KB, USER-accessible) --- */
-    uint32_t stack_top   = 0xBFFFFFF0;  /* 16-byte aligned */
-    uint32_t stack_pages = 4;           /* 16 KB */
-    uint32_t stack_base  = 0xC0000000 - (stack_pages * 4096);  /* 0xBFFFC000 */
+    /* --- Step 3: Allocate user stack --- */
+    /*
+     * x86_64 user _start is entered via iretq (not a CALL), so we must
+     * provide ABI-equivalent entry alignment (RSP % 16 == 8) to avoid
+     * compiler-emitted movaps faults on stack locals.
+     */
+#ifdef ARCH_X86_64
+    stack_top   = 0xBFFFFFF8;
+#else
+    stack_top   = 0xBFFFFFF0;          /* 16-byte aligned */
+#endif
+    stack_pages = 4;                   /* 16 KB */
+    stack_base  = 0xC0000000 - (stack_pages * 4096);
 
     void* user_stack = vmm_alloc_at(kernel_address_space,
-                                     stack_base, stack_pages * 4096,
-                                     VMM_PRESENT | VMM_WRITE | VMM_USER);
+                                    stack_base, stack_pages * 4096,
+                                    VMM_PRESENT | VMM_WRITE | VMM_USER);
     if (!user_stack) {
         serial_puts("ERROR: Failed to allocate user stack!\n");
         userspace_run_legacy();
@@ -131,7 +146,8 @@ void userspace_run(void) {
     print_hex("Code  @ ", user_code_addr);
     print_hex("Stack @ ", stack_top);
 
-    /* --- Step 4: Allocate a kernel stack for ring 3 ↔ ring 0 transitions ---
+    /* --- Step 4: Allocate a kernel stack for ring 3 ↔ ring 0 transitions --- */
+    /*
      * When the scheduler preempts this process and later reschedules it,
      * it calls arch_set_kernel_stack(current->kernel_stack) to restore
      * TSS.esp0. If kernel_stack is 0, TSS.esp0 = 0 → next INT/IRQ
@@ -143,12 +159,12 @@ void userspace_run(void) {
         userspace_run_legacy();
         return;
     }
-    current->kernel_stack = (uint32_t)kstack_mem + 8192;  /* stack top */
+    current->kernel_stack = (uint32_t)(uintptr_t)kstack_mem + 8192;  /* stack top */
     print_hex("KStk  @ ", current->kernel_stack);
 
-    /* Set TSS.esp0 to match — enter_usermode no longer does this */
-    extern void set_kernel_stack(uint32_t stack);
-    set_kernel_stack(current->kernel_stack);
+    /* Set kernel privilege-transition stack (TSS.esp0 / TSS.rsp0). */
+    extern void arch_set_kernel_stack(uint32_t stack);
+    arch_set_kernel_stack(current->kernel_stack);
 
     /* --- Step 5: Enter ring 3 (never returns) --- */
     serial_puts("Entering ring 3 — handing control to userspace shell.\n");

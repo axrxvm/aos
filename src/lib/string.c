@@ -266,13 +266,15 @@ void *memmove(void *dest, const void *src, size_t n) {
     if (d < s || d >= (s + n)) {
         // No overlap or dest is before src - copy forward
         // Use word-aligned copy if possible
-        if (n >= 16 && ((unsigned long)d % 4) == 0 && ((unsigned long)s % 4) == 0) {
+        if (n >= sizeof(unsigned long) * 4 &&
+            ((unsigned long)d % sizeof(unsigned long)) == 0 &&
+            ((unsigned long)s % sizeof(unsigned long)) == 0) {
             unsigned long *ld = (unsigned long *)d;
             const unsigned long *ls = (const unsigned long *)s;
             
-            while (n >= 4) {
+            while (n >= sizeof(unsigned long)) {
                 *ld++ = *ls++;
-                n -= 4;
+                n -= sizeof(unsigned long);
             }
             
             d = (unsigned char *)ld;
@@ -324,13 +326,15 @@ void *memcpy(void *dest, const void *src, size_t n) {
     }
     
     // Word-aligned copy for large blocks (if both aligned)
-    if (n >= 16 && ((unsigned long)d % 4) == 0 && ((unsigned long)s % 4) == 0) {
+    if (n >= sizeof(unsigned long) * 4 &&
+        ((unsigned long)d % sizeof(unsigned long)) == 0 &&
+        ((unsigned long)s % sizeof(unsigned long)) == 0) {
         unsigned long *ld = (unsigned long *)d;
         const unsigned long *ls = (const unsigned long *)s;
         
-        while (n >= 4) {
+        while (n >= sizeof(unsigned long)) {
             *ld++ = *ls++;
-            n -= 4;
+            n -= sizeof(unsigned long);
         }
         
         d = (unsigned char *)ld;
@@ -366,16 +370,18 @@ void *memset(void *s, int c, size_t n) {
     unsigned char uc = (unsigned char)c;
     
     // Word-aligned fill for large blocks (if aligned)
-    if (n >= 16 && ((unsigned long)p % 4) == 0) {
+    if (n >= sizeof(unsigned long) * 4 &&
+        ((unsigned long)p % sizeof(unsigned long)) == 0) {
         unsigned long pattern = uc;
-        pattern |= pattern << 8;
-        pattern |= pattern << 16;
+        for (size_t i = 1; i < sizeof(unsigned long); i++) {
+            pattern = (pattern << 8) | uc;
+        }
         
         unsigned long *lp = (unsigned long *)p;
         
-        while (n >= 4) {
+        while (n >= sizeof(unsigned long)) {
             *lp++ = pattern;
-            n -= 4;
+            n -= sizeof(unsigned long);
         }
         
         p = (unsigned char *)lp;

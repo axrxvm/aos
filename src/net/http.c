@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <vmm.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 #include <fs/vfs.h>
 
 #define HTTP_VERSION "HTTP/1.1"

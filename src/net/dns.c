@@ -20,7 +20,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 
 
 // Configuration

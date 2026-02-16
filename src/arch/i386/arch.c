@@ -11,8 +11,8 @@
 #include <arch/i386/gdt.h>
 #include <arch/i386/idt.h>
 #include <arch/i386/pic.h>
-#include <arch/i386/pit.h>
-#include <arch/i386/isr.h>
+#include <arch/pit.h>
+#include <arch/isr.h>
 #include <io.h>
 #include <stdint.h>
 

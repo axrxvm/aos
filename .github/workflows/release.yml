@@ -82,23 +82,29 @@ jobs:
         echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
         echo "date=$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
-    - name: Build kernel
-      run: make iso
+    - name: Build kernels (i386 + x86_64)
+      run: |
+        make ARCH=i386 iso
+        make ARCH=x86_64 iso
 
     - name: Verify ISO creation
-      run: test -f build/aOS.iso
+      run: |
+        test -f build/i386/aOS.iso
+        test -f build/x86_64/aOS.iso
 
     # Development build (always)
-    - name: Rename ISO for development build
+    - name: Rename ISOs for development build
       run: |
-        DEV_NAME="aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso"
-        cp build/aOS.iso "build/${DEV_NAME}"
+        for arch in i386 x86_64; do
+          DEV_NAME="aOS-${{ steps.version.outputs.version }}-${arch}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso"
+          cp "build/${arch}/aOS.iso" "build/${DEV_NAME}"
+        done
 
     - name: Upload development artifact
       uses: actions/upload-artifact@v4
       with:
         name: aOS-dev-${{ steps.version.outputs.version }}
-        path: build/*.iso
+        path: build/aOS-${{ steps.version.outputs.version }}-*-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso
         retention-days: 10
 
     - name: Check if release tag already exists
@@ -131,7 +137,7 @@ jobs:
         echo "changelog=## Changes%0A${LOG_ESCAPED}" >> "$GITHUB_OUTPUT"
 
     # Official release (silent force)
-    - name: Rename ISO for stable release
+    - name: Rename ISOs for stable release
       if: |
         (
           steps.version_numbers_changed.outputs.changed == 'true' ||
@@ -139,7 +145,8 @@ jobs:
         ) &&
         steps.tag_check.outputs.exists == 'false'
       run: |
-        cp build/aOS.iso "build/aOS-${{ steps.version.outputs.version }}-stable.iso"
+        cp build/i386/aOS.iso "build/aOS-${{ steps.version.outputs.version }}-i386-stable.iso"
+        cp build/x86_64/aOS.iso "build/aOS-${{ steps.version.outputs.version }}-x86_64-stable.iso"
 
     - name: Create GitHub Release
       if: |
@@ -159,12 +166,17 @@ jobs:
           - Version: `${{ steps.version.outputs.version }}`
           - Commit: `${{ steps.metadata.outputs.short_sha }}`
           - Build date: `${{ steps.metadata.outputs.date }}`
+          - Artifacts:
+            - `aOS-${{ steps.version.outputs.version }}-i386-stable.iso`
+            - `aOS-${{ steps.version.outputs.version }}-x86_64-stable.iso`
 
           ${{ steps.changelog.outputs.changelog }}
 
           ---
           Generated automatically by GitHub Actions.
-        files: build/aOS-${{ steps.version.outputs.version }}-stable.iso
+        files: |
+          build/aOS-${{ steps.version.outputs.version }}-i386-stable.iso
+          build/aOS-${{ steps.version.outputs.version }}-x86_64-stable.iso
         fail_on_unmatched_files: true
 
     # Force info stays private (Actions UI only)
@@ -174,6 +186,7 @@ jobs:
         echo "- Version: ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
         echo "- Commit: ${{ steps.metadata.outputs.short_sha }}" >> "$GITHUB_STEP_SUMMARY"
         echo "- Date: ${{ steps.metadata.outputs.date }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Architectures: i386, x86_64" >> "$GITHUB_STEP_SUMMARY"
 
         if [ "${{ github.event.inputs.force_release }}" = "true" ]; then
           echo "⚠️ Forced release (hidden from public release notes)" >> "$GITHUB_STEP_SUMMARY"

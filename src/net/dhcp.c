@@ -16,7 +16,7 @@
 #include <string.h>
 #include <serial.h>
 #include <stdlib.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 
 static dhcp_config_t dhcp_config;
 static uint32_t dhcp_xid = 0;

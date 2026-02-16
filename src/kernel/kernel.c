@@ -23,6 +23,7 @@
 #include <serial.h>
 #include <io.h>
 #include <memory.h>
+#include <pmm.h>
 #include <boot_info.h>
 #include <panic.h>
 #include <multiboot.h>
@@ -78,6 +79,8 @@ void kprint(const char *str) {
 uint32_t total_memory_kb = 0;
 int unformatted_disk_detected = 0;  // Flag for unformatted disk detection
 int simplefs_mounted = 0;  // Flag to track if SimpleFS was successfully mounted
+extern uint8_t __kernel_start;
+extern uint8_t __kernel_end;
 
 static void register_component_task(const char* name, task_type_t type, int priority) {
     pid_t tid = process_register_kernel_task(name, type, priority);
@@ -193,6 +196,9 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
 
     // Always initialize PMM (with fallback if needed)
     init_pmm(total_memory_kb * 1024); // init_pmm expects total memory in bytes.
+    // Reserve the full loaded kernel image (code/data/bss/boot tables) so PMM
+    // does not hand out frames that back active kernel state.
+    pmm_reserve_region((uint32_t)(uintptr_t)&__kernel_start, (uint32_t)(uintptr_t)&__kernel_end);
     
     // Initialize paging system
     init_paging();

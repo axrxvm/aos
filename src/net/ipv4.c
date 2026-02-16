@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include <vmm.h>
 #include <serial.h>
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 
 // IP packet ID counter
 static uint16_t ip_id_counter = 1;

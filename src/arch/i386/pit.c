@@ -8,7 +8,7 @@
  */
 
 
-#include <arch/i386/pit.h>
+#include <arch/pit.h>
 #include <io.h>     // For outb() and io_wait().
 #include <serial.h> // For serial_puts() for debugging.
 #include <stdlib.h> // For itoa() (if available and functional).

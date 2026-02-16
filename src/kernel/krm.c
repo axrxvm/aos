@@ -515,7 +515,7 @@ static void krm_analyze_panic(void) {
 
 
 // Safe memory validation - check if address is in plausible kernel range
-static uint8_t krm_is_valid_kernel_addr(uint32_t addr) {
+static uint8_t krm_is_valid_kernel_addr(uintptr_t addr) {
     // Kernel code/data is typically in low memory (0x100000 - 0x1000000)
     // Stack is also in this range
     // This is a heuristic check to avoid page faults
@@ -533,36 +533,35 @@ static uint8_t krm_is_valid_kernel_addr(uint32_t addr) {
 
 static void krm_collect_backtrace(uint32_t *backtrace, uint32_t *count, uint32_t max_frames) {
     *count = 0;
-    uint32_t *ebp;
-    asm volatile ("mov %%ebp, %0" : "=r"(ebp));
+    uintptr_t* frame = (uintptr_t*)__builtin_frame_address(0);
     
     krm_serial_write_string("[KRM] Starting backtrace from EBP: 0x");
     char addr_buf[16];
-    krm_uint_to_hex((uint32_t)ebp, addr_buf, sizeof(addr_buf));
+    krm_uint_to_hex((uint32_t)(uintptr_t)frame, addr_buf, sizeof(addr_buf));
     krm_serial_write_string(addr_buf);
     krm_serial_write_string("\n");
     
-    for (uint32_t frame = 0; ebp && frame < max_frames; frame++) {
+    for (uint32_t depth = 0; frame && depth < max_frames; depth++) {
         // Validate EBP before dereferencing
-        if (!krm_is_valid_kernel_addr((uint32_t)ebp)) {
+        if (!krm_is_valid_kernel_addr((uintptr_t)frame)) {
             krm_serial_write_string("[KRM] Invalid EBP, stopping backtrace\n");
             break;
         }
         
         // Validate EBP is properly aligned (should be 4-byte aligned)
-        if ((uint32_t)ebp & 0x3) {
+        if (((uintptr_t)frame) & 0x3) {
             krm_serial_write_string("[KRM] Misaligned EBP, stopping backtrace\n");
             break;
         }
         
         // Validate we can read [ebp+4] safely
-        uint32_t eip_addr = (uint32_t)&ebp[1];
+        uintptr_t eip_addr = (uintptr_t)&frame[1];
         if (!krm_is_valid_kernel_addr(eip_addr)) {
             krm_serial_write_string("[KRM] Cannot read return address, stopping backtrace\n");
             break;
         }
         
-        uint32_t eip = ebp[1]; // Return address at [ebp+4]
+        uint32_t eip = (uint32_t)frame[1]; // Return address at [ebp+4]
         
         // Validate EIP is in code range
         if (!krm_is_valid_kernel_addr(eip)) {
@@ -580,13 +579,13 @@ static void krm_collect_backtrace(uint32_t *backtrace, uint32_t *count, uint32_t
         (*count)++;
         
         // Get previous EBP
-        uint32_t prev_ebp_addr = (uint32_t)&ebp[0];
+        uintptr_t prev_ebp_addr = (uintptr_t)&frame[0];
         if (!krm_is_valid_kernel_addr(prev_ebp_addr)) {
             krm_serial_write_string("[KRM] Cannot read previous EBP, stopping backtrace\n");
             break;
         }
         
-        uint32_t prev_ebp_val = ebp[0]; // Previous EBP at [ebp]
+        uintptr_t prev_ebp_val = frame[0]; // Previous EBP at [ebp]
         
         // Validate previous EBP
         if (!krm_is_valid_kernel_addr(prev_ebp_val)) {
@@ -595,18 +594,18 @@ static void krm_collect_backtrace(uint32_t *backtrace, uint32_t *count, uint32_t
         }
         
         // Check for loops
-        if (prev_ebp_val == (uint32_t)ebp) {
+        if (prev_ebp_val == (uintptr_t)frame) {
             krm_serial_write_string("[KRM] Loop detected in stack, stopping backtrace\n");
             break;
         }
         
         // Stack grows downward, so prev_ebp should be higher than current
-        if (prev_ebp_val < (uint32_t)ebp && frame > 0) {
+        if (prev_ebp_val < (uintptr_t)frame && depth > 0) {
             krm_serial_write_string("[KRM] Stack direction anomaly, stopping backtrace\n");
             break;
         }
         
-        ebp = (uint32_t *)prev_ebp_val;
+        frame = (uintptr_t*)prev_ebp_val;
     }
     
     krm_serial_write_string("[KRM] Backtrace complete\n");
