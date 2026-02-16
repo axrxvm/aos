@@ -114,22 +114,24 @@ jobs:
       id: changelog
       run: |
         LAST_TAG=$(git tag --sort=-creatordate | head -n 1 || true)
-
-        if [ -n "$LAST_TAG" ]; then
-          RANGE="$LAST_TAG..HEAD"
-        else
-          RANGE="HEAD"
-        fi
-
-        echo "## Changes" > changelog.md
-        git log $RANGE \
-          --pretty=format:"- %s (%h)" \
-          --no-merges >> changelog.md
-
-        echo "changelog<<EOF" >> $GITHUB_OUTPUT
-        cat changelog.md >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-
+  
+          if [ -n "$LAST_TAG" ]; then
+            RANGE="$LAST_TAG..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+      
+          echo "## Changes" > changelog.md
+          git log $RANGE \
+            --pretty=format:"- %s (%h)" \
+            --no-merges >> changelog.md
+      
+          {
+            echo "changelog<<EOF"
+            cat changelog.md
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+          
     # Official release (silent force)
     - name: Rename ISO for stable release
       if: |
