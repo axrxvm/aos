@@ -1070,7 +1070,7 @@ void krm_enter(registers_t *regs, const char *message, const char *file, uint32_
     krm_serial_init();
     krm_serial_write_string("\n\n");
     krm_serial_write_string("==============================================\n");
-    krm_serial_write_string("  aOS KERNEL RECOVERY MODE (KRM) ACTIVATED\n");
+    krm_serial_write_string("   aOS KERNEL RECOVERY MODE (KRM) ACTIVATED\n");
     krm_serial_write_string("==============================================\n");
     krm_serial_write_string("[KRM] Initializing standalone hardware drivers...\n");
     
