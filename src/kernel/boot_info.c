@@ -96,7 +96,7 @@ void print_boot_info(const multiboot_info_t *mbi) {
         serial_puts("Memory Map:\n");
         serial_puts("  Address: 0x");
         serial_put_uint32(mbi->mmap_addr);
-        serial_puts("\n  Length: 0x");
+        serial_puts("\n   Length: 0x");
         serial_put_uint32(mbi->mmap_length);
         serial_puts("\n");
     }
