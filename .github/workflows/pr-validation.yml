@@ -173,7 +173,7 @@ jobs:
     
     - name: Check ISO size
       run: |
-        PR_SIZE=$(stat -f%z build/aos.iso 2>/dev/null || stat -c%s build/aos.iso)
+        PR_SIZE=$(stat -f%z build/aOS.iso 2>/dev/null || stat -c%s build/aOS.iso)
         echo "PR ISO size: $(numfmt --to=iec-i --suffix=B $PR_SIZE)"
         
         # Warning if ISO is larger than 10MB
