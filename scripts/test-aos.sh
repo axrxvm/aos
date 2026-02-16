@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "========================================"
-echo "  aOS Tester - Starting aOS v0.8.5     "
+echo "    aOS Tester - Starting aOS v0.8.5    "
 echo "========================================"
 echo ""
 
