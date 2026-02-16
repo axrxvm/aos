@@ -110,6 +110,7 @@ jobs:
           echo "exists=false" >> "$GITHUB_OUTPUT"
         fi
 
+    # ✅ SAFE changelog (no EOF, no multiline output)
     - name: Generate changelog
       id: changelog
       run: |
@@ -121,16 +122,13 @@ jobs:
           RANGE="HEAD"
         fi
 
-        echo "## Changes" > changelog.md
-        git log "$RANGE" \
+        LOG=$(git log "$RANGE" \
           --pretty=format:"- %s (%h)" \
-          --no-merges >> changelog.md
+          --no-merges)
 
-        {
-          echo "changelog<<EOF"
-          cat changelog.md
-          echo "EOF"
-        } >> "$GITHUB_OUTPUT"
+        LOG_ESCAPED=$(printf '%s' "$LOG" | sed ':a;N;$!ba;s/\n/%0A/g')
+
+        echo "changelog=## Changes%0A${LOG_ESCAPED}" >> "$GITHUB_OUTPUT"
 
     # Official release (silent force)
     - name: Rename ISO for stable release
@@ -162,7 +160,6 @@ jobs:
           - Commit: `${{ steps.metadata.outputs.short_sha }}`
           - Build date: `${{ steps.metadata.outputs.date }}`
 
-          ### Changelog
           ${{ steps.changelog.outputs.changelog }}
 
           ---
