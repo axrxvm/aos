@@ -3,7 +3,8 @@ name: PR Validation
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 jobs:
   pr-checks:
     name: Pull Request Checks
@@ -139,6 +140,7 @@ jobs:
 
   label-pr:
     name: Auto-label PR
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
