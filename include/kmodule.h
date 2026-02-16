@@ -56,6 +56,7 @@ typedef struct kmodule {
     // Metadata
     uint32_t load_time;
     uint32_t ref_count;
+    uint32_t task_id;   // Process system TID for this module
     
     struct kmodule* next;
 } kmodule_t;

@@ -27,6 +27,18 @@ typedef enum {
     PROCESS_DEAD        // Can be reclaimed
 } process_state_t;
 
+// Task categories tracked by the process system
+typedef enum {
+    TASK_TYPE_PROCESS = 0,   // Regular schedulable userspace process
+    TASK_TYPE_KERNEL,        // Kernel control task
+    TASK_TYPE_SHELL,         // Interactive shell task
+    TASK_TYPE_COMMAND,       // Command execution task
+    TASK_TYPE_SERVICE,       // Init/service-managed task
+    TASK_TYPE_DRIVER,        // Device driver task
+    TASK_TYPE_MODULE,        // Kernel module task
+    TASK_TYPE_SUBSYSTEM      // Core subsystem task
+} task_type_t;
+
 // Process priority levels
 #define PRIORITY_IDLE       0
 #define PRIORITY_LOW        1
@@ -65,6 +77,8 @@ typedef struct process {
     char name[64];                  // Process name
     
     process_state_t state;          // Current state
+    task_type_t task_type;          // Task category
+    uint8_t schedulable;            // 1=scheduler-managed execution context
     int priority;                   // Scheduling priority
     uint32_t time_slice;            // Remaining time slice
     uint32_t total_time;            // Total CPU time used
@@ -100,6 +114,10 @@ void init_process_manager(void);
 
 // Process lifecycle
 pid_t process_create(const char* name, void (*entry_point)(void), int priority);
+pid_t process_register_kernel_task(const char* name, task_type_t type, int priority);
+int process_finish_kernel_task(pid_t pid, int status);
+int process_mark_task_state(pid_t pid, process_state_t state);
+int process_set_current_identity(const char* name, task_type_t type, int priority, uint32_t privilege_level);
 void process_exit(int status);
 int process_fork(void);
 int process_execve(const char* path, char* const argv[], char* const envp[]);
@@ -115,6 +133,7 @@ int process_getpid(void);
 process_t* process_get_current(void);
 process_t* process_get_by_pid(pid_t pid);
 int process_for_each(int (*callback)(process_t* proc, void* ctx), void* ctx);
+const char* process_task_type_name(task_type_t type);
 
 // Scheduler
 void schedule(void);

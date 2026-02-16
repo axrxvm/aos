@@ -18,69 +18,127 @@
 
 extern void kprint(const char *str);
 
-static void cmd_procs(const char* args) {
-    (void)args;
-    
-    kprint("Active Tasks:");
-    kprint("TID   STATE     PRIORITY  NAME");
-    kprint("----  --------  --------  ----------------");
-    
-    for (int i = 0; i < MAX_PROCESSES; i++) {
-        process_t* proc = process_get_by_pid(i);
-        if (proc && proc->state != PROCESS_DEAD) {
-            char line[80];
-            char pid_str[8], pri_str[8];
-            itoa(proc->pid, pid_str, 10);
-            itoa(proc->priority, pri_str, 10);
-            
-            const char* state_str;
-            switch (proc->state) {
-                case PROCESS_READY:    state_str = "READY   "; break;
-                case PROCESS_RUNNING:  state_str = "RUNNING "; break;
-                case PROCESS_BLOCKED:  state_str = "BLOCKED "; break;
-                case PROCESS_SLEEPING: state_str = "SLEEPING"; break;
-                case PROCESS_ZOMBIE:   state_str = "ZOMBIE  "; break;
-                default:               state_str = "UNKNOWN "; break;
-            }
-            
-            strcpy(line, pid_str);
-            strcat(line, "     ");
-            strcat(line, state_str);
-            strcat(line, "  ");
-            strcat(line, pri_str);
-            strcat(line, "         ");
-            strcat(line, proc->name);
-            
-            kprint(line);
+typedef struct {
+    uint32_t total;
+    uint32_t schedulable;
+} procs_stats_t;
+
+static const char* proc_state_to_string(process_state_t state) {
+    switch (state) {
+        case PROCESS_READY: return "READY";
+        case PROCESS_RUNNING: return "RUNNING";
+        case PROCESS_BLOCKED: return "BLOCKED";
+        case PROCESS_SLEEPING: return "SLEEP";
+        case PROCESS_ZOMBIE: return "ZOMBIE";
+        case PROCESS_DEAD: return "DEAD";
+        default: return "UNKNOWN";
+    }
+}
+
+static void append_padded(char* dst, uint32_t cap, const char* text, uint32_t width) {
+    uint32_t len = strlen(dst);
+    if (len >= cap - 1) {
+        return;
+    }
+
+    const char* src = text ? text : "";
+    uint32_t i = 0;
+    while (src[i] && (len + i) < cap - 1) {
+        dst[len + i] = src[i];
+        i++;
+    }
+    len += i;
+
+    while (i < width && len < cap - 1) {
+        dst[len++] = ' ';
+        i++;
+    }
+    dst[len] = '\0';
+}
+
+static int cmd_procs_cb(process_t* proc, void* ctx) {
+    procs_stats_t* stats = (procs_stats_t*)ctx;
+    if (stats) {
+        stats->total++;
+        if (proc->schedulable) {
+            stats->schedulable++;
         }
     }
+
+    char line[160];
+    char tid_str[12];
+    char pri_str[12];
+    char ring_str[12];
+
+    itoa(proc->pid, tid_str, 10);
+    itoa(proc->priority, pri_str, 10);
+    if (proc->privilege_level == 0) {
+        strcpy(ring_str, "k0");
+    } else {
+        strcpy(ring_str, "u3");
+    }
+
+    line[0] = '\0';
+    append_padded(line, sizeof(line), tid_str, 6);
+    append_padded(line, sizeof(line), process_task_type_name(proc->task_type), 11);
+    append_padded(line, sizeof(line), proc_state_to_string(proc->state), 11);
+    append_padded(line, sizeof(line), pri_str, 5);
+    append_padded(line, sizeof(line), ring_str, 6);
+    append_padded(line, sizeof(line), proc->schedulable ? "yes" : "no", 7);
+    append_padded(line, sizeof(line), proc->name, 0);
+
+    kprint(line);
+    return 0;
+}
+
+static void cmd_procs(const char* args) {
+    (void)args;
+    procs_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    
+    kprint("Active Tasks:");
+    kprint("TID   TYPE       STATE      PRI  RING  SCHED  NAME");
+    kprint("----  ---------  ---------  ---  ----  -----  ----------------");
+    process_for_each(cmd_procs_cb, &stats);
+
+    char summary[128];
+    char total_str[16];
+    char sched_str[16];
+    itoa(stats.total, total_str, 10);
+    itoa(stats.schedulable, sched_str, 10);
+    strcpy(summary, "Total tasks: ");
+    strcat(summary, total_str);
+    strcat(summary, " (schedulable: ");
+    strcat(summary, sched_str);
+    strcat(summary, ")");
+    kprint(summary);
 }
 
 static void cmd_terminate(const char* args) {
     if (!args || strlen(args) == 0) {
-        kprint("Usage: terminate <task_id>");
+        kprint("Usage: terminate <tid>");
         return;
     }
     
-    int pid = 0;
+    int tid = 0;
     int i = 0;
     while (args[i] >= '0' && args[i] <= '9') {
-        pid = pid * 10 + (args[i] - '0');
+        tid = tid * 10 + (args[i] - '0');
         i++;
     }
     
-    if (pid <= 0) {
-        kprint("Error: Invalid task ID");
+    if (tid <= 0) {
+        kprint("Error: Invalid TID");
         return;
     }
     
-    process_t* proc = process_get_by_pid(pid);
+    process_t* proc = process_get_by_pid(tid);
     if (!proc || proc->state == PROCESS_DEAD) {
         kprint("Error: Task not found");
         return;
     }
     
-    if (process_kill(pid, MSG_TERMINATE) == 0) {
+    if (process_kill(tid, MSG_TERMINATE) == 0) {
         kprint("Task terminated successfully");
     } else {
         kprint("Error: Failed to terminate task");
@@ -162,24 +220,24 @@ static void cmd_chaninfo(const char* args) {
 
 static void cmd_await(const char* args) {
     if (!args || strlen(args) == 0) {
-        kprint("Usage: await <task_id>");
+        kprint("Usage: await <tid>");
         kprint("Wait for a child task to complete");
         return;
     }
     
-    int pid = 0;
+    int tid = 0;
     int i = 0;
     while (args[i] >= '0' && args[i] <= '9') {
-        pid = pid * 10 + (args[i] - '0');
+        tid = tid * 10 + (args[i] - '0');
         i++;
     }
     
-    if (pid <= 0) {
-        kprint("Error: Invalid task ID");
+    if (tid <= 0) {
+        kprint("Error: Invalid TID");
         return;
     }
     
-    process_t* target = process_get_by_pid(pid);
+    process_t* target = process_get_by_pid(tid);
     if (!target || target->state == PROCESS_DEAD) {
         kprint("Error: Task not found");
         return;
@@ -188,7 +246,7 @@ static void cmd_await(const char* args) {
     kprint("Waiting for task to complete...");
     
     int status;
-    int result = process_waitpid(pid, &status, 0);
+    int result = process_waitpid(tid, &status, 0);
     
     if (result < 0) {
         kprint("Error: Failed to wait for task (may not be a child)");
@@ -209,9 +267,9 @@ static void cmd_await(const char* args) {
 
 void cmd_module_process_register(void) {
     command_register_with_category("procs", "", "List active tasks", "Process", cmd_procs);
-    command_register_with_category("terminate", "<task_id>", "Terminate task by ID", "Process", cmd_terminate);
+    command_register_with_category("terminate", "<tid>", "Terminate task by ID", "Process", cmd_terminate);
     command_register_with_category("pause", "<milliseconds>", "Pause execution", "Process", cmd_pause);
-    command_register_with_category("await", "<task_id>", "Wait for task completion", "Process", cmd_await);
+    command_register_with_category("await", "<tid>", "Wait for task completion", "Process", cmd_await);
     command_register_with_category("show", "<filename>", "Display file contents", "Process", cmd_show);
     command_register_with_category("chanmake", "", "Create communication channel", "Process", cmd_chanmake);
     command_register_with_category("chaninfo", "", "Display channel information", "Process", cmd_chaninfo);

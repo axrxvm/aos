@@ -15,6 +15,8 @@
 #include <vmm.h>
 #include <version.h>
 #include <memory.h>
+#include <process.h>
+#include <stdlib.h>
 
 static kmodule_t* module_list = NULL;
 static int module_count = 0;
@@ -188,6 +190,13 @@ int kmodule_load(const char* path) {
     }
     
     // Add to list
+    char task_name[MODULE_NAME_LEN + 6];
+    snprintf(task_name, sizeof(task_name), "kmod:%s", module->name);
+    pid_t task_id = process_register_kernel_task(task_name, TASK_TYPE_MODULE, PRIORITY_HIGH);
+    if (task_id > 0) {
+        module->task_id = (uint32_t)task_id;
+    }
+
     module->state = MODULE_LOADED;
     module->next = module_list;
     module_list = module;
@@ -236,6 +245,9 @@ int kmodule_unload(const char* name) {
     }
     
     // Free memory
+    if (module->task_id != 0) {
+        process_finish_kernel_task((pid_t)module->task_id, 0);
+    }
     if (module->data_base) kfree(module->data_base);
     kfree(module->code_base);
     kfree(module);
@@ -258,6 +270,13 @@ void kmodule_list(void) {
         serial_puts(current->name);
         serial_puts(" v");
         serial_puts(current->version);
+        if (current->task_id != 0) {
+            serial_puts(" (TID ");
+            char tid_buf[12];
+            itoa((int)current->task_id, tid_buf, 10);
+            serial_puts(tid_buf);
+            serial_puts(")");
+        }
         
         switch (current->state) {
             case MODULE_LOADED:

@@ -233,13 +233,15 @@ static int procfs_read_pidinfo(pid_t pid, void* buffer, uint32_t size, uint32_t 
     char scratch[256];
     uint32_t pos = 0;
 
-    pos = append_kv_num(scratch, sizeof(scratch), pos, "pid", (uint32_t)proc->pid);
+    pos = append_kv_num(scratch, sizeof(scratch), pos, "tid", (uint32_t)proc->pid);
     pos = append_kv_str(scratch, sizeof(scratch), pos, "name", proc->name);
+    pos = append_kv_str(scratch, sizeof(scratch), pos, "task_type", process_task_type_name(proc->task_type));
     pos = append_kv_str(scratch, sizeof(scratch), pos, "state", proc_state_name(proc->state));
+    pos = append_kv_num(scratch, sizeof(scratch), pos, "schedulable", proc->schedulable);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "priority", (uint32_t)proc->priority);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "time_slice", proc->time_slice);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "total_time", proc->total_time);
-    pos = append_kv_num(scratch, sizeof(scratch), pos, "parent", (uint32_t)proc->parent_pid);
+    pos = append_kv_num(scratch, sizeof(scratch), pos, "parent_tid", (uint32_t)proc->parent_pid);
     pos = append_kv_hex(scratch, sizeof(scratch), pos, "addr_space", (uint32_t)proc->address_space);
     pos = append_kv_hex(scratch, sizeof(scratch), pos, "kernel_sp", proc->kernel_stack);
 

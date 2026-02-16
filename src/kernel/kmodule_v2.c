@@ -29,6 +29,7 @@
 #include <stdarg.h>
 #include <syscall.h>
 #include <stdlib.h>
+#include <process.h>
 
 // External memory info from kernel.c
 extern uint32_t total_memory_kb;
@@ -950,6 +951,13 @@ int kmodule_load_v2(const void* data, size_t len) {
     }
     
     // Add to list
+    char task_name[MODULE_NAME_LEN + 6];
+    snprintf(task_name, sizeof(task_name), "kmod:%s", entry->base.name);
+    pid_t task_id = process_register_kernel_task(task_name, TASK_TYPE_MODULE, PRIORITY_HIGH);
+    if (task_id > 0) {
+        entry->base.task_id = (uint32_t)task_id;
+    }
+
     entry->base.state = MODULE_LOADED;
     entry->next = v2_module_list;
     v2_module_list = entry;
@@ -1042,6 +1050,9 @@ int kmodule_unload_v2(const char* name) {
             *prev = current->next;
             
             // Free resources
+            if (current->base.task_id != 0) {
+                process_finish_kernel_task((pid_t)current->base.task_id, 0);
+            }
             if (current->vm) kfree(current->vm);
             if (current->base.data_base) kfree(current->base.data_base);
             if (current->base.code_base) kfree(current->base.code_base);
@@ -1098,6 +1109,12 @@ void kmodule_list_v2(void) {
         }
         cbuf[8] = '\0';
         serial_puts(cbuf);
+        if (current->base.task_id != 0) {
+            serial_puts(" tid=");
+            char tid_buf[12];
+            itoa((int)current->base.task_id, tid_buf, 10);
+            serial_puts(tid_buf);
+        }
         
         serial_puts("\n");
         current = current->next;

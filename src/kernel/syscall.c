@@ -563,7 +563,26 @@ void syscall_handler(void* regs_ptr) {
     if (proc) {
         // Check if syscall is allowed by sandbox filter
         if (!syscall_check_allowed(syscall_num, proc->sandbox.syscall_filter)) {
-            serial_puts("Syscall blocked by sandbox: ");
+            serial_puts("Syscall blocked by sandbox: tid=");
+            char pid_buf[16];
+            itoa(proc->pid, pid_buf, 10);
+            serial_puts(pid_buf);
+            serial_puts(" name=");
+            serial_puts(proc->name);
+            serial_puts(" syscall=");
+            char sys_buf[16];
+            itoa((int)syscall_num, sys_buf, 10);
+            serial_puts(sys_buf);
+            serial_puts(" filter=0x");
+            char hex[9];
+            uint32_t f = proc->sandbox.syscall_filter;
+            for (int i = 7; i >= 0; i--) {
+                int nibble = (f >> (i * 4)) & 0xF;
+                hex[7 - i] = (nibble < 10) ? ('0' + nibble) : ('a' + nibble - 10);
+            }
+            hex[8] = '\0';
+            serial_puts(hex);
+            serial_puts("\n");
             goto out;
         }
         

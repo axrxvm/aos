@@ -173,7 +173,7 @@ int init_register_builtin_service(const char* name,
     service->stop_fn = stop_fn;
     service->auto_restart = auto_restart;
     service->state = SERVICE_STOPPED;
-    service->pid = 0;
+    service->tid = 0;
     service->start_time = 0;
     service->restart_count = 0;
     

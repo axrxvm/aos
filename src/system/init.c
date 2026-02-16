@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <vga.h>
 #include <arch.h>
+#include <process.h>
 
 // Maximum number of services
 #define MAX_SERVICES 32
@@ -95,7 +96,7 @@ int init_register_service(service_t* service) {
     
     // Initialize service state
     service->state = SERVICE_STOPPED;
-    service->pid = 0;
+    service->tid = 0;
     service->start_time = 0;
     service->restart_count = 0;
     
@@ -144,6 +145,16 @@ int init_start_service(const char* name) {
     
     // Call the service start function
     service->start_fn();
+    if (service->tid == 0) {
+        char task_name[96];
+        snprintf(task_name, sizeof(task_name), "svc:%s", service->name);
+        pid_t tid = process_register_kernel_task(task_name, TASK_TYPE_SERVICE, PRIORITY_NORMAL);
+        if (tid > 0) {
+            service->tid = (uint32_t)tid;
+        }
+    } else {
+        process_mark_task_state((pid_t)service->tid, PROCESS_RUNNING);
+    }
     service->state = SERVICE_RUNNING;
     service->start_time = arch_timer_get_ticks();
     service->restart_count = 0;
@@ -167,6 +178,10 @@ int init_stop_service(const char* name) {
     
     if (!service->stop_fn) {
         service->state = SERVICE_STOPPED;
+        if (service->tid != 0) {
+            process_finish_kernel_task((pid_t)service->tid, 0);
+            service->tid = 0;
+        }
         return 0;
     }
     
@@ -177,7 +192,10 @@ int init_stop_service(const char* name) {
     // Call the service stop function
     service->stop_fn();
     service->state = SERVICE_STOPPED;
-    service->pid = 0;
+    if (service->tid != 0) {
+        process_finish_kernel_task((pid_t)service->tid, 0);
+    }
+    service->tid = 0;
     
     snprintf(buf, sizeof(buf), "Service stopped: %s", name);
     init_log(buf);
@@ -232,6 +250,13 @@ void init_list_services(void) {
             }
             
             vga_puts("]\n");
+            if (svc->tid != 0) {
+                vga_puts("    TID: ");
+                char tid_buf[16];
+                itoa((int)svc->tid, tid_buf, 10);
+                vga_puts(tid_buf);
+                vga_puts("\n");
+            }
         }
     }
 }
@@ -369,6 +394,13 @@ void init_service_status(const char* name) {
     }
     
     vga_puts("\n");
+    if (service->tid != 0) {
+        vga_puts("  TID: ");
+        char tid_buf[16];
+        itoa((int)service->tid, tid_buf, 10);
+        vga_puts(tid_buf);
+        vga_puts("\n");
+    }
 }
 
 // Enable verbose output

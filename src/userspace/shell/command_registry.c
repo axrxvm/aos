@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <serial.h>
+#include <process.h>
 
 // Command registry - static allocation to avoid early boot issues
 static command_t command_registry[MAX_REGISTERED_COMMANDS];
@@ -107,6 +108,20 @@ int execute_command(const char* input) {
     
     // Calculate command name length
     uint32_t cmd_len = space - input;
+    if (cmd_len == 0) {
+        return 0;
+    }
+
+    char cmd_name_buf[64];
+    uint32_t copy_len = cmd_len < 63 ? cmd_len : 63;
+    for (uint32_t j = 0; j < copy_len; j++) {
+        cmd_name_buf[j] = input[j];
+    }
+    cmd_name_buf[copy_len] = '\0';
+
+    char task_name[80];
+    snprintf(task_name, sizeof(task_name), "cmd:%s", cmd_name_buf);
+    pid_t command_tid = process_register_kernel_task(task_name, TASK_TYPE_COMMAND, PRIORITY_NORMAL);
     
     // Skip spaces to find arguments
     const char* args = space;
@@ -127,17 +142,11 @@ int execute_command(const char* input) {
         
         if (cmd_len == name_len && strncmp(input, name, cmd_len) == 0) {
             // Command found, execute handler
+            int status = 0;
             if (command_registry[i].handler) {
                 command_registry[i].handler(args);
             } else {
                 // Try to execute as module VM command
-                char cmd_name_buf[64];
-                uint32_t copy_len = cmd_len < 63 ? cmd_len : 63;
-                for (uint32_t j = 0; j < copy_len; j++) {
-                    cmd_name_buf[j] = input[j];
-                }
-                cmd_name_buf[copy_len] = '\0';
-                
                 int vm_result = execute_module_vm_command(cmd_name_buf, args);
                 if (vm_result < 0) {
                     // Command exists but execution failed
@@ -150,10 +159,13 @@ int execute_command(const char* input) {
                     } else {
                         kprint("[Error: Module command execution failed]");
                     }
-                    return -1;
+                    status = -1;
                 }
             }
-            return 0; // Command found and executed
+            if (command_tid > 0) {
+                process_finish_kernel_task(command_tid, status);
+            }
+            return status == 0 ? 0 : -1; // Command found and executed
         }
     }
     
@@ -162,11 +174,14 @@ int execute_command(const char* input) {
     
     // Print only the command name, not the arguments
     char temp_buf[64];
-    uint32_t copy_len = cmd_len < 63 ? cmd_len : 63;
+    copy_len = cmd_len < 63 ? cmd_len : 63;
     for (uint32_t i = 0; i < copy_len; i++) {
         temp_buf[i] = input[i];
     }
     temp_buf[copy_len] = '\0';
     kprint(temp_buf);
+    if (command_tid > 0) {
+        process_finish_kernel_task(command_tid, -1);
+    }
     return -1; // Command not found
 }

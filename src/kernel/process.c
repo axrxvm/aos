@@ -19,6 +19,8 @@
 #include <elf.h>
 #include <sandbox.h>
 #include <fileperm.h>
+#include <init.h>
+#include <kmodule.h>
 
 // Process table
 static process_t process_table[MAX_PROCESSES];
@@ -43,12 +45,30 @@ static const uint32_t time_slices[5] = {
 };
 
 // Helper functions
+static int clamp_priority(int priority) {
+    if (priority < PRIORITY_IDLE) return PRIORITY_IDLE;
+    if (priority > PRIORITY_REALTIME) return PRIORITY_REALTIME;
+    return priority;
+}
+
+const char* process_task_type_name(task_type_t type) {
+    switch (type) {
+        case TASK_TYPE_PROCESS: return "process";
+        case TASK_TYPE_KERNEL: return "kernel";
+        case TASK_TYPE_SHELL: return "shell";
+        case TASK_TYPE_COMMAND: return "command";
+        case TASK_TYPE_SERVICE: return "service";
+        case TASK_TYPE_DRIVER: return "driver";
+        case TASK_TYPE_MODULE: return "module";
+        case TASK_TYPE_SUBSYSTEM: return "subsystem";
+        default: return "unknown";
+    }
+}
+
 static void enqueue_process(process_t* proc) {
-    if (!proc) return;
+    if (!proc || !proc->schedulable) return;
     
-    int priority = proc->priority;
-    if (priority < 0) priority = 0;
-    if (priority > 4) priority = 4;
+    int priority = clamp_priority(proc->priority);
     
     proc->next = NULL;
     proc->state = PROCESS_READY;
@@ -65,6 +85,7 @@ static void enqueue_process(process_t* proc) {
 }
 
 static process_t* dequeue_process(int priority) {
+    if (priority < PRIORITY_IDLE || priority > PRIORITY_REALTIME) return NULL;
     if (!ready_queue[priority]) return NULL;
     
     process_t* proc = ready_queue[priority];
@@ -108,6 +129,8 @@ void init_process_manager(void) {
     }
     
     strcpy(idle_process->name, "idle");
+    idle_process->task_type = TASK_TYPE_KERNEL;
+    idle_process->schedulable = 1;
     idle_process->priority = PRIORITY_IDLE;
     idle_process->state = PROCESS_READY;
     idle_process->parent_pid = 0;
@@ -148,6 +171,8 @@ void init_process_manager(void) {
     }
     
     strcpy(current_process->name, "kernel");
+    current_process->task_type = TASK_TYPE_KERNEL;
+    current_process->schedulable = 1;
     current_process->priority = PRIORITY_NORMAL;
     current_process->state = PROCESS_RUNNING;
     current_process->parent_pid = 0;
@@ -161,6 +186,10 @@ void init_process_manager(void) {
     current_process->memory_used = 0;
     current_process->files_open = 0;
     current_process->children_count = 0;
+    current_process->privilege_level = 0;
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        current_process->file_descriptors[i] = -1;
+    }
     
     serial_puts("Process manager initialized.\n");
 }
@@ -172,6 +201,10 @@ process_t* process_get_current(void) {
 
 // Get process by PID
 process_t* process_get_by_pid(pid_t pid) {
+    if (pid <= 0) {
+        return NULL;
+    }
+
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (process_table[i].pid == pid && process_table[i].state != PROCESS_DEAD) {
             return &process_table[i];
@@ -206,6 +239,103 @@ int process_getpid(void) {
     return -1;
 }
 
+pid_t process_register_kernel_task(const char* name, task_type_t type, int priority) {
+    process_t* proc = allocate_process();
+    if (!proc) {
+        return -1;
+    }
+
+    if (!name || !*name) {
+        name = "kernel-task";
+    }
+
+    strncpy(proc->name, name, sizeof(proc->name) - 1);
+    proc->name[sizeof(proc->name) - 1] = '\0';
+    proc->task_type = type;
+    proc->schedulable = 0;
+    proc->priority = clamp_priority(priority);
+    proc->state = PROCESS_RUNNING;
+    proc->parent_pid = current_process ? current_process->pid : 0;
+    proc->address_space = kernel_address_space;
+    proc->privilege_level = 0;
+    proc->time_slice = 0;
+
+    sandbox_create(&proc->sandbox, CAGE_NONE);
+    proc->owner_type = OWNER_SYSTEM;
+    proc->owner_id = 0;
+    proc->memory_used = 0;
+    proc->files_open = 0;
+    proc->children_count = 0;
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        proc->file_descriptors[i] = -1;
+    }
+
+    if (current_process) {
+        current_process->children_count++;
+        proc->parent = current_process;
+    }
+
+    return proc->pid;
+}
+
+int process_finish_kernel_task(pid_t pid, int status) {
+    process_t* proc = process_get_by_pid(pid);
+    if (!proc || proc->schedulable || proc == current_process) {
+        return -1;
+    }
+
+    if (proc->parent && proc->parent->children_count > 0) {
+        proc->parent->children_count--;
+    }
+    proc->exit_status = status;
+    proc->state = PROCESS_DEAD;
+    return 0;
+}
+
+int process_mark_task_state(pid_t pid, process_state_t state) {
+    process_t* proc = process_get_by_pid(pid);
+    if (!proc) {
+        return -1;
+    }
+
+    if (!proc->schedulable && state == PROCESS_READY) {
+        return -1;
+    }
+
+    proc->state = state;
+
+    if (proc->schedulable && state == PROCESS_READY) {
+        enqueue_process(proc);
+    }
+
+    return 0;
+}
+
+int process_set_current_identity(const char* name, task_type_t type, int priority, uint32_t privilege_level) {
+    if (!current_process) {
+        return -1;
+    }
+
+    if (name && *name) {
+        strncpy(current_process->name, name, sizeof(current_process->name) - 1);
+        current_process->name[sizeof(current_process->name) - 1] = '\0';
+    }
+
+    current_process->task_type = type;
+    current_process->priority = clamp_priority(priority);
+    current_process->time_slice = time_slices[current_process->priority];
+    current_process->privilege_level = privilege_level;
+    current_process->schedulable = 1;
+
+    // Ring 3 shell must be allowed to use terminal and input syscalls.
+    if (privilege_level == 3 && type == TASK_TYPE_SHELL) {
+        sandbox_create(&current_process->sandbox, CAGE_LIGHT);
+        current_process->sandbox.syscall_filter |= (ALLOW_DEVICE | ALLOW_IPC);
+    }
+    return 0;
+}
+
 // Create a new process
 pid_t process_create(const char* name, void (*entry_point)(void), int priority) {
     process_t* proc = allocate_process();
@@ -214,12 +344,17 @@ pid_t process_create(const char* name, void (*entry_point)(void), int priority) 
     }
     
     // Set basic info
+    if (!name || !*name) {
+        name = "task";
+    }
     strncpy(proc->name, name, 63);
     proc->name[63] = '\0';
-    proc->priority = priority;
+    proc->task_type = TASK_TYPE_PROCESS;
+    proc->schedulable = 1;
+    proc->priority = clamp_priority(priority);
     proc->state = PROCESS_READY;
     proc->parent_pid = current_process ? current_process->pid : 0;
-    proc->time_slice = time_slices[priority];
+    proc->time_slice = time_slices[proc->priority];
     
     // Create address space
     proc->address_space = create_address_space();
@@ -304,7 +439,7 @@ void process_exit(int status) {
 
 // Yield CPU to another process
 void process_yield(void) {
-    if (!current_process) return;
+    if (!current_process || !current_process->schedulable) return;
     
     // Put current process back in ready queue
     if (current_process->state == PROCESS_RUNNING) {
@@ -317,7 +452,7 @@ void process_yield(void) {
 
 // Sleep for milliseconds
 void process_sleep(uint32_t milliseconds) {
-    if (!current_process) return;
+    if (!current_process || !current_process->schedulable) return;
     
     current_process->state = PROCESS_SLEEPING;
     current_process->wake_time = scheduler_ticks + (milliseconds / 10);  // Assume 10ms tick
@@ -331,7 +466,7 @@ void scheduler_tick(void) {
     
     // Wake up sleeping processes
     for (int i = 0; i < MAX_PROCESSES; i++) {
-        if (process_table[i].state == PROCESS_SLEEPING) {
+        if (process_table[i].schedulable && process_table[i].state == PROCESS_SLEEPING) {
             if (scheduler_ticks >= process_table[i].wake_time) {
                 enqueue_process(&process_table[i]);
             }
@@ -339,7 +474,7 @@ void scheduler_tick(void) {
     }
     
     // Decrement time slice of current process
-    if (current_process && current_process->state == PROCESS_RUNNING) {
+    if (current_process && current_process->schedulable && current_process->state == PROCESS_RUNNING) {
         if (current_process->time_slice > 0) {
             current_process->time_slice--;
         }
@@ -391,7 +526,7 @@ void schedule(void) {
     process_t* old_process = current_process;
     
     // Save old process state if still running
-    if (old_process->state == PROCESS_RUNNING) {
+    if (old_process->schedulable && old_process->state == PROCESS_RUNNING) {
         enqueue_process(old_process);
     }
     
@@ -404,10 +539,14 @@ void schedule(void) {
     
     if (!next) {
         // No process ready, continue with current or idle
-        if (old_process->state == PROCESS_RUNNING) {
+        if (old_process->schedulable && old_process->state == PROCESS_RUNNING) {
             return;  // Keep running current
         }
-        panic("No processes to schedule!");
+        if (idle_process) {
+            next = idle_process;
+        } else {
+            panic("No processes to schedule!");
+        }
     }
     
     // Switch to next process
@@ -473,7 +612,9 @@ int process_fork(void) {
     // Copy basic info
     strcpy(child->name, current_process->name);
     strcat(child->name, "-fork");
-    child->priority = current_process->priority;
+    child->task_type = TASK_TYPE_PROCESS;
+    child->schedulable = 1;
+    child->priority = clamp_priority(current_process->priority);
     child->state = PROCESS_READY;
     child->parent_pid = current_process->pid;
     child->parent = current_process;
@@ -549,6 +690,9 @@ int process_waitpid(int pid, int* status, int options) {
         if (child->address_space) {
             destroy_address_space(child->address_space);
         }
+        if (current_process->children_count > 0) {
+            current_process->children_count--;
+        }
         child->state = PROCESS_DEAD;
         
         return child_pid;
@@ -564,11 +708,46 @@ int process_waitpid(int pid, int* status, int options) {
 
 // Kill process
 int process_kill(int pid, int signal) {
-    (void)signal;  // TODO: Handle different signals
-    
+    (void)signal;
+
     process_t* proc = process_get_by_pid(pid);
     if (!proc || proc->state == PROCESS_DEAD) {
         return -1;
+    }
+
+    if (!proc->schedulable) {
+        if (proc->task_type == TASK_TYPE_SERVICE) {
+            const char* svc_name = proc->name;
+            if (strncmp(proc->name, "svc:", 4) == 0) {
+                svc_name = proc->name + 4;
+            }
+            return init_stop_service(svc_name);
+        }
+
+        if (proc->task_type == TASK_TYPE_MODULE) {
+            const char* mod_name = proc->name;
+            if (strncmp(proc->name, "kmod:", 5) == 0) {
+                mod_name = proc->name + 5;
+            }
+
+            if (kmodule_unload_v2(mod_name) == 0) {
+                return 0;
+            }
+            return kmodule_unload(mod_name);
+        }
+
+        if (proc->task_type == TASK_TYPE_KERNEL ||
+            proc->task_type == TASK_TYPE_DRIVER ||
+            proc->task_type == TASK_TYPE_SUBSYSTEM) {
+            return -1;
+        }
+
+        if (proc->parent && proc->parent->children_count > 0) {
+            proc->parent->children_count--;
+        }
+        proc->exit_status = 128 + signal;
+        proc->state = PROCESS_DEAD;
+        return 0;
     }
     
     // Simple implementation: just exit the process

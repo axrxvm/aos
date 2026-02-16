@@ -78,6 +78,8 @@ void userspace_run(void) {
         return;
     }
 
+    process_set_current_identity("aosh", TASK_TYPE_SHELL, PRIORITY_NORMAL, 3);
+
     /* --- Compute embedded binary size --- */
     uint32_t bin_size = (uint32_t)(_binary_aosh_bin_end - _binary_aosh_bin_start);
     uint32_t code_pages = (bin_size + 4095) / 4096;  /* round up to pages */
@@ -160,6 +162,7 @@ void userspace_run(void) {
 // Legacy ring 0 shell fallback
 void userspace_run_legacy(void) {
     serial_puts("Starting legacy ring 0 shell...\n");
+    process_set_current_identity("aosh-legacy", TASK_TYPE_SHELL, PRIORITY_NORMAL, 0);
 
     while (1) {
         if (shell_login() == 0) {
@@ -176,4 +179,3 @@ void userspace_run_legacy(void) {
         }
     }
 }
-

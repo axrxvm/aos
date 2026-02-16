@@ -49,7 +49,7 @@ typedef struct {
     uint32_t priority;               // Priority (0=highest, 255=lowest)
     void (*start_fn)(void);          // Function to start the service
     void (*stop_fn)(void);           // Function to stop the service
-    uint32_t pid;                    // Process ID (for daemons)
+    uint32_t tid;                    // Task ID (for daemons/services)
     service_state_t state;           // Current state
     uint32_t start_time;             // Time service was started (in ticks)
     uint32_t restart_count;          // Number of restart attempts

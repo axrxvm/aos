@@ -20,27 +20,27 @@
 
 // Command: Show sandbox info for current or specified process
 void cmd_sandbox(const char* args) {
-    int pid;
+    int tid;
     
     if (args && *args) {
-        pid = atoi(args);
+        tid = atoi(args);
     } else {
-        pid = process_getpid();
+        tid = process_getpid();
     }
     
     sandbox_t sb;
-    if (sandbox_get(pid, &sb) != 0) {
-        vga_puts("Error: Could not get sandbox info for PID ");
+    if (sandbox_get(tid, &sb) != 0) {
+        vga_puts("Error: Could not get sandbox info for TID ");
         char buf[12];
-        itoa(pid, buf, 10);
+        itoa(tid, buf, 10);
         vga_puts(buf);
         vga_puts("\n");
         return;
     }
     
-    vga_puts("Sandbox Info for PID ");
+    vga_puts("Sandbox Info for TID ");
     char buf[12];
-    itoa(pid, buf, 10);
+    itoa(tid, buf, 10);
     vga_puts(buf);
     vga_puts(":\n");
     
@@ -144,8 +144,8 @@ void cmd_cage(const char* args) {
         return;
     }
     
-    int pid = process_getpid();
-    if (sandbox_apply(pid, &sb) != 0) {
+    int tid = process_getpid();
+    if (sandbox_apply(tid, &sb) != 0) {
         vga_puts("Failed to apply sandbox\n");
         return;
     }
@@ -160,8 +160,8 @@ void cmd_cageroot(const char* args) {
         return;
     }
     
-    int pid = process_getpid();
-    if (cage_set_root(pid, args) != 0) {
+    int tid = process_getpid();
+    if (cage_set_root(tid, args) != 0) {
         vga_puts("Failed to set cage root\n");
         return;
     }
@@ -244,7 +244,7 @@ void cmd_perms(const char* args) {
 
 // Register security commands
 void register_security_commands(void) {
-    command_register_with_category("sandbox", "[pid]", 
+    command_register_with_category("sandbox", "[tid]", 
                      "Show sandbox info", "Security", cmd_sandbox);
     command_register_with_category("cage", "<level>", 
                      "Apply sandbox to process", "Security", cmd_cage);

@@ -79,6 +79,19 @@ uint32_t total_memory_kb = 0;
 int unformatted_disk_detected = 0;  // Flag for unformatted disk detection
 int simplefs_mounted = 0;  // Flag to track if SimpleFS was successfully mounted
 
+static void register_component_task(const char* name, task_type_t type, int priority) {
+    pid_t tid = process_register_kernel_task(name, type, priority);
+    if (tid > 0) {
+        serial_puts("[TASK] Registered ");
+        serial_puts(name);
+        serial_puts(" as TID ");
+        char tid_buf[12];
+        itoa(tid, tid_buf, 10);
+        serial_puts(tid_buf);
+        serial_puts("\n");
+    }
+}
+
 void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     // Initialize Kernel Recovery Mode FIRST - before any other subsystems
     // This ensures KRM is always available if anything goes wrong anywhere
@@ -398,6 +411,17 @@ mount_done:
     serial_puts("Initializing process manager...\n");
     init_process_manager();
     serial_puts("Process manager initialized.\n");
+    register_component_task("kernel.core", TASK_TYPE_KERNEL, PRIORITY_HIGH);
+    register_component_task("driver.keyboard", TASK_TYPE_DRIVER, PRIORITY_NORMAL);
+    register_component_task("driver.mouse", TASK_TYPE_DRIVER, PRIORITY_NORMAL);
+    register_component_task("driver.pci", TASK_TYPE_DRIVER, PRIORITY_NORMAL);
+    register_component_task("driver.ata", TASK_TYPE_DRIVER, PRIORITY_NORMAL);
+    register_component_task("driver.e1000", TASK_TYPE_DRIVER, PRIORITY_NORMAL);
+    register_component_task("driver.pcnet", TASK_TYPE_DRIVER, PRIORITY_NORMAL);
+    register_component_task("subsystem.memory", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
+    register_component_task("subsystem.vfs", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
+    register_component_task("subsystem.network", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
+    register_component_task("subsystem.security", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     
     // Initialize system call interface
     serial_puts("Initializing system calls...\n");
@@ -423,6 +447,7 @@ mount_done:
     serial_puts("Initializing init system...\n");
     init_system();
     serial_puts("Init system initialized.\n");
+    register_component_task("subsystem.init", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     
     // Register and start default system services
     serial_puts("Registering default system services...\n");
@@ -438,6 +463,7 @@ mount_done:
     serial_puts("Initializing kernel module system...\n");
     init_kmodules();
     serial_puts("Kernel module system initialized.\n");
+    register_component_task("subsystem.kmodule", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     
     // NOW it's safe to enable interrupts - paging is fully initialized
     serial_puts("Enabling interrupts...\n");
@@ -462,6 +488,7 @@ mount_done:
     serial_puts("Kernel is now idle. Launching userspace...\n\n");
     
     // Initialize userspace subsystems (command registry, shell, etc.)
+    register_component_task("subsystem.userspace", TASK_TYPE_SUBSYSTEM, PRIORITY_NORMAL);
     userspace_init();
     
     // Launch userspace shell (TODO: should be a separate process)
