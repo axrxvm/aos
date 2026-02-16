@@ -24,7 +24,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0   # Required for tag + diff safety
+        fetch-depth: 0
 
     - name: Install dependencies
       run: |
@@ -46,7 +46,6 @@ jobs:
         PATCH=$(grep "AOS_VERSION_PATCH" include/version.h | grep -oP '\d+')
         VERSION="${MAJOR}.${MINOR}.${PATCH}"
         echo "version=${VERSION}" >> $GITHUB_OUTPUT
-        echo "Detected version: ${VERSION}"
 
     - name: Check if version.h changed
       id: version_changed
@@ -68,46 +67,40 @@ jobs:
           echo "changed=false" >> $GITHUB_OUTPUT
         fi
 
-    # Enforce version bump discipline (pushes only)
-    - name: Enforce version bump when version.h changes
+    - name: Enforce version bump discipline
       if: |
         github.event_name == 'push' &&
         steps.version_changed.outputs.changed == 'true' &&
         steps.version_numbers_changed.outputs.changed == 'false'
       run: |
-        echo "❌ include/version.h was modified without bumping MAJOR/MINOR/PATCH"
+        echo "include/version.h modified without version bump"
         exit 1
 
     - name: Generate build metadata
       id: metadata
       run: |
-        SHORT_SHA=$(git rev-parse --short=7 HEAD)
-        DATE=$(date +%Y%m%d)
-        echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
-        echo "date=${DATE}" >> $GITHUB_OUTPUT
+        echo "short_sha=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
+        echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
     - name: Build kernel
       run: make iso
 
     - name: Verify ISO creation
-      run: |
-        test -f build/aOS.iso || exit 1
-        ls -lh build/aOS.iso
+      run: test -f build/aOS.iso
 
-    # Tier 1: Development build (always)
+    # Development build (always)
     - name: Rename ISO for development build
       run: |
         DEV_NAME="aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso"
         cp build/aOS.iso "build/${DEV_NAME}"
 
-    - name: Upload development build artifact
+    - name: Upload development artifact
       uses: actions/upload-artifact@v4
       with:
-        name: aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}
-        path: build/aOS-${{ steps.version.outputs.version }}-${{ steps.metadata.outputs.short_sha }}-${{ steps.metadata.outputs.date }}.iso
+        name: aOS-dev-${{ steps.version.outputs.version }}
+        path: build/*.iso
         retention-days: 10
 
-    # Prevent duplicate release tags
     - name: Check if release tag already exists
       id: tag_check
       run: |
@@ -117,8 +110,28 @@ jobs:
           echo "exists=false" >> $GITHUB_OUTPUT
         fi
 
-    # Tier 2: Official release (automatic OR forced)
-    - name: Rename ISO for official release
+    - name: Generate changelog
+      id: changelog
+      run: |
+        LAST_TAG=$(git tag --sort=-creatordate | head -n 1 || true)
+
+        if [ -n "$LAST_TAG" ]; then
+          RANGE="$LAST_TAG..HEAD"
+        else
+          RANGE="HEAD"
+        fi
+
+        echo "## Changes" > changelog.md
+        git log $RANGE \
+          --pretty=format:"- %s (%h)" \
+          --no-merges >> changelog.md
+
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        cat changelog.md >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    # Official release (silent force)
+    - name: Rename ISO for stable release
       if: |
         (
           steps.version_numbers_changed.outputs.changed == 'true' ||
@@ -126,8 +139,7 @@ jobs:
         ) &&
         steps.tag_check.outputs.exists == 'false'
       run: |
-        RELEASE_NAME="aOS-${{ steps.version.outputs.version }}-stable.iso"
-        cp build/aOS.iso "build/${RELEASE_NAME}"
+        cp build/aOS.iso "build/aOS-${{ steps.version.outputs.version }}-stable.iso"
 
     - name: Create GitHub Release
       if: |
@@ -141,18 +153,22 @@ jobs:
         tag_name: v${{ steps.version.outputs.version }}
         name: aOS v${{ steps.version.outputs.version }}
         body: |
-          # aOS v${{ steps.version.outputs.version }}
+          ## aOS v${{ steps.version.outputs.version }}
 
-          ## Build Information
-          - **Version**: ${{ steps.version.outputs.version }}
-          - **Commit**: ${{ github.sha }}
-          - **Build Date**: ${{ steps.metadata.outputs.date }}
+          ### Build Info
+          - Version: `${{ steps.version.outputs.version }}`
+          - Commit: `${{ steps.metadata.outputs.short_sha }}`
+          - Build date: `${{ steps.metadata.outputs.date }}`
+
+          ### Changelog
+          ${{ steps.changelog.outputs.changelog }}
 
           ---
-          *Release generated automatically or via manual trigger.*
+          Generated automatically by GitHub Actions.
         files: build/aOS-${{ steps.version.outputs.version }}-stable.iso
         fail_on_unmatched_files: true
 
+    # Force info stays private (Actions UI only)
     - name: Build summary
       run: |
         echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
@@ -161,9 +177,9 @@ jobs:
         echo "- Date: ${{ steps.metadata.outputs.date }}" >> $GITHUB_STEP_SUMMARY
 
         if [ "${{ github.event.inputs.force_release }}" == "true" ]; then
-          echo "🚨 **Manual Forced Release**" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ Forced release (hidden from public release notes)" >> $GITHUB_STEP_SUMMARY
         elif [ "${{ steps.version_numbers_changed.outputs.changed }}" == "true" ]; then
-          echo "✅ **Official Release Created**" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 Stable release published" >> $GITHUB_STEP_SUMMARY
         else
-          echo "📦 **Development Build Only**" >> $GITHUB_STEP_SUMMARY
+          echo "🧪 Development build only" >> $GITHUB_STEP_SUMMARY
         fi
