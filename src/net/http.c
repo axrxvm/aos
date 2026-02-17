@@ -145,6 +145,14 @@ http_request_t* http_request_create(const char* method, const char* url_string) 
     strcpy(request->host, url.host);
     strcpy(request->path, url.path);
     request->port = url.port;
+
+    // Preserve query string so callers can use URLs like /time?tz=Asia/Kolkata.
+    if (url.query[0] != '\0') {
+        if (strlen(request->path) + 1 < sizeof(request->path)) {
+            strncat(request->path, "?", sizeof(request->path) - strlen(request->path) - 1);
+            strncat(request->path, url.query, sizeof(request->path) - strlen(request->path) - 1);
+        }
+    }
     
     // Default headers
     http_request_add_header(request, "Host", url.host);

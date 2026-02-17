@@ -15,10 +15,10 @@
 #include <init_service.h>
 #include <init.h>
 #include <serial.h>
-#include <vga.h>
 #include <string.h>
 #include <stdlib.h>
 #include <fs/vfs.h>
+#include <time_subsystem.h>
 
 // Storage for built-in services
 static service_t builtin_services[16];
@@ -39,11 +39,11 @@ static void service_serial_stop(void) {
 
 // VGA console service
 static void service_vga_start(void) {
-    vga_puts("VGA console service started\n");
+    serial_puts("VGA console service started\n");
 }
 
 static void service_vga_stop(void) {
-    vga_puts("VGA console service stopped\n");
+    serial_puts("VGA console service stopped\n");
 }
 
 // Keyboard service
@@ -89,6 +89,20 @@ static void service_network_start(void) {
 
 static void service_network_stop(void) {
     serial_puts("Network service stopped\n");
+}
+
+// Time synchronization service
+static void service_timesync_start(void) {
+    serial_puts("Time sync service started\n");
+    if (time_sync_now() == 0) {
+        serial_puts("Time sync service: wall clock synchronized\n");
+    } else {
+        serial_puts("Time sync service: synchronization failed\n");
+    }
+}
+
+static void service_timesync_stop(void) {
+    serial_puts("Time sync service stopped\n");
 }
 
 
@@ -265,6 +279,17 @@ void init_default_services(void) {
         5,
         service_network_start,
         service_network_stop,
+        true
+    );
+
+    init_register_builtin_service(
+        "timesync",
+        "Timezone-aware wall clock synchronization",
+        SERVICE_TYPE_DAEMON,
+        multi_level,
+        6,
+        service_timesync_start,
+        service_timesync_stop,
         true
     );
     

@@ -32,6 +32,7 @@ aOS is a bare-metal, multiboot-compliant operating system kernel engineered with
 - **Hardware support**: ATA/IDE PIO, E1000/PCnet NICs, PS/2 keyboard/mouse, VGA text mode, serial console, PCI enumeration
 - **Package management**: aOS Package Manager (APM) with HTTP-based repository and SHA-256 integrity verification
 - **Init system**: Service management with runlevels, dependency resolution, and automatic restart
+- **Time subsystem**: API-backed wall-clock synchronization with persistent timezone configuration
 
 ## Building & Running
 

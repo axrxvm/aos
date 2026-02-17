@@ -92,6 +92,8 @@ static int apm_build_module_path(const char* module_name, char* module_path, siz
     return 0;
 }
 
+static int apm_load_module_internal(const char* module_name, bool to_vga);
+
 static int apm_read_module_blob(const char* module_path, uint8_t** data_out, size_t* size_out) {
     if (!module_path || !data_out || !size_out) {
         return -1;
@@ -958,21 +960,28 @@ int apm_install_module(const char* module_name) {
     return 0;
 }
 
-int apm_load_module(const char* module_name) {
+static int apm_load_module_internal(const char* module_name, bool to_vga) {
     char module_path[256];
     bool is_v2 = false;
     char module_id[MODULE_NAME_LEN];
     module_id[0] = '\0';
 
     if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
-        vga_puts("[APM] Error: Invalid module name/path\n");
+        if (to_vga) vga_puts("[APM] Error: Invalid module name/path\n");
+        else serial_puts("[APM] Error: Invalid module name/path\n");
         return -1;
     }
 
     if (apm_get_module_identity(module_path, module_id, sizeof(module_id), &is_v2) < 0) {
-        vga_puts("[APM] Error: Invalid module file: ");
-        vga_puts(module_path);
-        vga_puts("\n");
+        if (to_vga) {
+            vga_puts("[APM] Error: Invalid module file: ");
+            vga_puts(module_path);
+            vga_puts("\n");
+        } else {
+            serial_puts("[APM] Error: Invalid module file: ");
+            serial_puts(module_path);
+            serial_puts("\n");
+        }
         return -1;
     }
 
@@ -982,7 +991,8 @@ int apm_load_module(const char* module_name) {
         size_t size = 0;
 
         if (apm_read_module_blob(module_path, &data, &size) < 0) {
-            vga_puts("[APM] Error: Failed to read module file\n");
+            if (to_vga) vga_puts("[APM] Error: Failed to read module file\n");
+            else serial_puts("[APM] Error: Failed to read module file\n");
             return -1;
         }
 
@@ -993,18 +1003,33 @@ int apm_load_module(const char* module_name) {
     }
 
     if (result == 0) {
-        vga_puts("[APM] Loaded module: ");
-        if (module_id[0] != '\0') {
-            vga_puts(module_id);
+        if (to_vga) {
+            vga_puts("[APM] Loaded module: ");
+            if (module_id[0] != '\0') {
+                vga_puts(module_id);
+            } else {
+                vga_puts(module_name);
+            }
+            vga_puts("\n");
         } else {
-            vga_puts(module_name);
+            serial_puts("[APM] Loaded module: ");
+            if (module_id[0] != '\0') {
+                serial_puts(module_id);
+            } else {
+                serial_puts(module_name);
+            }
+            serial_puts("\n");
         }
-        vga_puts("\n");
     } else {
-        vga_puts("[APM] Error: Failed to load module\n");
+        if (to_vga) vga_puts("[APM] Error: Failed to load module\n");
+        else serial_puts("[APM] Error: Failed to load module\n");
     }
 
     return result;
+}
+
+int apm_load_module(const char* module_name) {
+    return apm_load_module_internal(module_name, true);
 }
 
 int apm_unload_module(const char* module_name) {
@@ -1195,7 +1220,7 @@ int apm_load_startup_modules(void) {
     int failed = 0;
 
     for (int i = 0; i < count; i++) {
-        if (apm_load_module(entries[i]) == 0) {
+        if (apm_load_module_internal(entries[i], false) == 0) {
             loaded++;
         } else {
             failed++;

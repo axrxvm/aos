@@ -42,6 +42,7 @@
 #include <ipc.h>       // For inter-process communication
 #include <partition.h> // For partition management
 #include <envars.h>    // For environment variables
+#include <time_subsystem.h> // For timezone-aware wall clock sync
 #include <kmodule.h>   // For kernel modules
 #include <init.h>      // For init system
 #include <init_service.h> // For service management
@@ -443,6 +444,7 @@ mount_done:
     register_component_task("subsystem.memory", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     register_component_task("subsystem.vfs", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     register_component_task("subsystem.network", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
+    register_component_task("subsystem.time", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     register_component_task("subsystem.security", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
     
     // Initialize system call interface
@@ -464,6 +466,11 @@ mount_done:
     serial_puts("Initializing environment variables...\n");
     envars_init();
     serial_puts("Environment variables initialized.\n");
+
+    // Initialize time subsystem (timezone config + wall clock state)
+    serial_puts("Initializing time subsystem...\n");
+    time_subsystem_init();
+    serial_puts("Time subsystem initialized.\n");
     
     // Initialize init system
     serial_puts("Initializing init system...\n");

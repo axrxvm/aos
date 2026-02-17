@@ -20,6 +20,7 @@
 #include <shell.h>
 #include <panic.h>  // For test panic command
 #include <boot_info.h>
+#include <time_subsystem.h>
 
 // Forward declarations
 extern void kprint(const char *str);
@@ -324,6 +325,114 @@ static void cmd_uptime(const char* args) {
     kprint("");
 }
 
+static void cmd_time(const char* args) {
+    char now[96];
+
+    (void)args;
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+    vga_puts("Timezone: ");
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+    vga_puts(time_get_timezone());
+    vga_puts("\n");
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+    vga_puts("Synchronized: ");
+    if (time_is_synced()) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        vga_puts("yes\n");
+    } else {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        vga_puts("no\n");
+    }
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+    vga_puts("Current Time: ");
+    if (time_format_now(now, sizeof(now)) == 0) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        vga_puts(now);
+        vga_puts("\n");
+    } else {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        vga_puts("not available (run 'timesync')\n");
+    }
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
+static void cmd_timesync(const char* args) {
+    (void)args;
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+    vga_puts("Syncing wall clock with time API...\n");
+
+    if (time_sync_now() == 0) {
+        char now[96];
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        vga_puts("Time synchronization successful.\n");
+
+        if (time_format_now(now, sizeof(now)) == 0) {
+            vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+            vga_puts(now);
+            vga_puts("\n");
+        }
+    } else {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+        vga_puts("Time synchronization failed. Check network/DNS.\n");
+    }
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
+static void cmd_timezone(const char* args) {
+    char timezone[TIME_MAX_TIMEZONE_LEN];
+    int i = 0;
+
+    if (!args || *args == '\0') {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+        vga_puts("Current timezone: ");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        vga_puts(time_get_timezone());
+        vga_puts("\n");
+        return;
+    }
+
+    while (*args == ' ' || *args == '\t') args++;
+    while (*args && *args != ' ' && *args != '\t' && i < TIME_MAX_TIMEZONE_LEN - 1) {
+        timezone[i++] = *args++;
+    }
+    timezone[i] = '\0';
+
+    if (timezone[0] == '\0') {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        vga_puts("Usage: timezone [Region/City]\n");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        return;
+    }
+
+    if (time_set_timezone(timezone, true) != 0) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+        vga_puts("Failed to set timezone. Use format Region/City (example: Asia/Kolkata).\n");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        return;
+    }
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+    vga_puts("Timezone updated to ");
+    vga_puts(time_get_timezone());
+    vga_puts(" and saved.\n");
+
+    if (time_sync_now() == 0) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+        vga_puts("Time re-synchronized for new timezone.\n");
+    } else {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        vga_puts("Timezone saved, but sync failed. Run 'timesync' later.\n");
+    }
+
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
 static void cmd_reboot(const char* args) {
     (void)args; // Unused
     vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
@@ -434,6 +543,9 @@ void cmd_module_core_register(void) {
     command_register_with_category("clear", "", "Clear the screen and reset cursor position", "System", cmd_clear);
     command_register_with_category("echo", "[-n] [-e] [-c] <text>", "Echo text to screen (-n: no newline, -e: interpret escapes, -c: clear first)", "System", cmd_echo);
     command_register_with_category("uptime", "", "Display system uptime", "System", cmd_uptime);
+    command_register_with_category("time", "", "Display wall clock time and sync status", "System", cmd_time);
+    command_register_with_category("timesync", "", "Synchronize wall clock using aOS time API", "System", cmd_timesync);
+    command_register_with_category("timezone", "[Region/City]", "Display or set timezone (persists to /etc/timezone.conf)", "System", cmd_timezone);
     command_register_with_category("reboot", "", "Reboot the system", "System", cmd_reboot);
     command_register_with_category("halt", "", "Halt the system", "System", cmd_halt);
     command_register_with_category("shutdown", "[-c] [+seconds|now] [message]", "Power off system (default: 20s, -c: cancel)", "System", cmd_poweroff);
