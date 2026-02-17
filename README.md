@@ -247,7 +247,7 @@ aOS's equivalent to chroot jails with enhanced isolation:
 
 **HTTP-based package distribution system:**
 
-- **Repository**: `http://repo.aosproject.workers.dev/main/i386`
+- **Repository**: `http://repo.aosproject.workers.dev/main`
 - **Package Format**: APM currently supports managing   `.akm` kernel modules with JSON metadata
 - **Integrity**: SHA-256 checksum verification
 - **Caching**: Local repository list at `/sys/apm/kmodule.list.source`

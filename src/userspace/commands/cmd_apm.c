@@ -68,8 +68,14 @@ static void cmd_apm(const char* args) {
         vga_puts("  kmodule info <name>        - Show module information\n");
         vga_puts("  kmodule install <name>     - Install a module\n");
         vga_puts("  kmodule i <name>           - Alias for install\n");
-        vga_puts("  kmodule remove <name>      - Remove an installed module\n");
-        vga_puts("  kmodule u <name>           - Alias for remove\n");
+        vga_puts("  kmodule load|l <name> [--auto]  - Load installed module\n");
+        vga_puts("  kmodule unload|x <name>    - Unload loaded module\n");
+        vga_puts("  kmodule remove|u <name>    - Remove installed module\n");
+        vga_puts("  kmodule delete|d <name>    - Alias for remove\n");
+        vga_puts("  kmodule autoload list      - List startup autoload modules\n");
+        vga_puts("  kmodule autoload enable <name>  - Enable startup autoload\n");
+        vga_puts("  kmodule autoload disable <name> - Disable startup autoload\n");
+        vga_puts("  kmodule autoload load      - Load startup modules now\n");
         return;
     }
 
@@ -90,10 +96,16 @@ static void cmd_apm(const char* args) {
         if (argc < 2) {
             vga_puts("Usage: apm kmodule <subcommand> [options]\n");
             vga_puts("\nSubcommands:\n");
-            vga_puts("  list [--installed]   - List modules\n");
-            vga_puts("  info <name>          - Show module information\n");
-            vga_puts("  install|i <name>     - Install a module\n");
-            vga_puts("  remove|u <name>      - Remove an installed module\n");
+            vga_puts("  list [--installed]        - List modules\n");
+            vga_puts("  info <name>               - Show module information\n");
+            vga_puts("  install|i <name>          - Install a module\n");
+            vga_puts("  load|l <name> [--auto]    - Load installed module\n");
+            vga_puts("  unload|x <name>           - Unload loaded module\n");
+            vga_puts("  remove|u|delete|d <name>  - Remove installed module\n");
+            vga_puts("  autoload list             - List startup autoload modules\n");
+            vga_puts("  autoload enable <name>    - Enable startup autoload\n");
+            vga_puts("  autoload disable <name>   - Disable startup autoload\n");
+            vga_puts("  autoload load             - Load startup modules now\n");
             return;
         }
 
@@ -129,13 +141,91 @@ static void cmd_apm(const char* args) {
             return;
         }
 
-        // Handle 'apm kmodule remove <name>' or 'apm kmodule u <name>'
-        if (strcmp(subcmd, "remove") == 0 || strcmp(subcmd, "u") == 0) {
+        // Handle 'apm kmodule load <name> [--auto]'
+        if (strcmp(subcmd, "load") == 0 || strcmp(subcmd, "l") == 0) {
+            if (argc < 3) {
+                vga_puts("Usage: apm kmodule load <module_name> [--auto]\n");
+                return;
+            }
+            int enable_autoload = 0;
+            for (int i = 3; i < argc; i++) {
+                if (strcmp(argv[i], "--auto") == 0 || strcmp(argv[i], "--autoload") == 0) {
+                    enable_autoload = 1;
+                } else {
+                    vga_puts("Unknown option: ");
+                    vga_puts(argv[i]);
+                    vga_puts("\n");
+                    return;
+                }
+            }
+
+            if (apm_load_module(argv[2]) == 0 && enable_autoload) {
+                apm_set_module_autoload(argv[2], true);
+            }
+            return;
+        }
+
+        // Handle 'apm kmodule unload <name>' or 'apm kmodule x <name>'
+        if (strcmp(subcmd, "unload") == 0 || strcmp(subcmd, "x") == 0) {
+            if (argc < 3) {
+                vga_puts("Usage: apm kmodule unload <module_name>\n");
+                return;
+            }
+            apm_unload_module(argv[2]);
+            return;
+        }
+
+        // Handle remove/delete aliases
+        if (strcmp(subcmd, "remove") == 0 || strcmp(subcmd, "u") == 0 ||
+            strcmp(subcmd, "delete") == 0 || strcmp(subcmd, "d") == 0) {
             if (argc < 3) {
                 vga_puts("Usage: apm kmodule remove <module_name>\n");
                 return;
             }
             apm_remove_module(argv[2]);
+            return;
+        }
+
+        // Handle autoload controls
+        if (strcmp(subcmd, "autoload") == 0) {
+            if (argc < 3) {
+                vga_puts("Usage: apm kmodule autoload <list|enable|disable|load> [module_name]\n");
+                return;
+            }
+
+            const char* action = argv[2];
+            if (strcmp(action, "list") == 0) {
+                apm_list_autoload_modules();
+                return;
+            }
+
+            if (strcmp(action, "load") == 0) {
+                apm_load_startup_modules();
+                return;
+            }
+
+            if (strcmp(action, "enable") == 0 || strcmp(action, "on") == 0 || strcmp(action, "add") == 0) {
+                if (argc < 4) {
+                    vga_puts("Usage: apm kmodule autoload enable <module_name>\n");
+                    return;
+                }
+                apm_set_module_autoload(argv[3], true);
+                return;
+            }
+
+            if (strcmp(action, "disable") == 0 || strcmp(action, "off") == 0 ||
+                strcmp(action, "remove") == 0 || strcmp(action, "rm") == 0) {
+                if (argc < 4) {
+                    vga_puts("Usage: apm kmodule autoload disable <module_name>\n");
+                    return;
+                }
+                apm_set_module_autoload(argv[3], false);
+                return;
+            }
+
+            vga_puts("Unknown autoload action: ");
+            vga_puts(action);
+            vga_puts("\n");
             return;
         }
 

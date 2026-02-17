@@ -188,6 +188,17 @@ int execute_command(const char* input) {
         }
     }
     
+    // Not in userspace registry; try module VM command table directly.
+    {
+        int vm_result = execute_module_vm_command(cmd_name_buf, args);
+        if (vm_result == 0) {
+            if (command_tid > 0) {
+                process_finish_kernel_task(command_tid, 0);
+            }
+            return 0;
+        }
+    }
+
     // Command not found
     vga_puts("Command not found: ");
     

@@ -14,9 +14,10 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define APM_REPO_BASE_URL "http://repo.aosproject.workers.dev/main/i386" // http cuz https not working as of now.
+#define APM_REPO_BASE_URL "http://repo.aosproject.workers.dev/main" // http cuz https not working as of now.
 #define APM_LIST_FILE "/sys/apm/kmodule.list.source"
 #define APM_MODULE_DIR "/sys/apm/modules"
+#define APM_AUTOLOAD_FILE "/sys/apm/kmodule.autoload"
 #define APM_MAX_MODULES 64
 #define APM_MAX_NAME_LEN 64
 #define APM_MAX_VERSION_LEN 16
@@ -69,6 +70,21 @@ int apm_install_module(const char* module_name);
 
 // Remove an installed module
 int apm_remove_module(const char* module_name);
+
+// Load an installed module
+int apm_load_module(const char* module_name);
+
+// Unload a loaded module
+int apm_unload_module(const char* module_name);
+
+// Configure startup auto-load for a module
+int apm_set_module_autoload(const char* module_name, bool enabled);
+
+// List modules configured for startup auto-load
+int apm_list_autoload_modules(void);
+
+// Load modules configured for startup auto-load
+int apm_load_startup_modules(void);
 
 // Internal helper functions
 int apm_load_local_list(apm_repository_t* repo);

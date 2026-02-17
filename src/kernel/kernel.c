@@ -486,6 +486,13 @@ mount_done:
     init_kmodules();
     serial_puts("Kernel module system initialized.\n");
     register_component_task("subsystem.kmodule", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
+
+    serial_puts("Loading startup kernel modules from APM...\n");
+    if (apm_load_startup_modules() == 0) {
+        serial_puts("Startup kernel modules loaded.\n");
+    } else {
+        serial_puts("Some startup kernel modules failed to load.\n");
+    }
     
     // NOW it's safe to enable interrupts - paging is fully initialized
     serial_puts("Enabling interrupts...\n");

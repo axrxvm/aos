@@ -16,10 +16,261 @@
 #include <crypto/sha256.h>
 #include <fs/vfs.h>
 #include <kmodule.h>
+#include <kmodule_api.h>
 #include <vmm.h>
 
 static apm_repository_t g_apm_repo;
 static bool g_apm_initialized = false;
+
+#define APM_AUTOLOAD_MAX_BYTES 4096
+#define APM_V1_MAGIC 0x004D4B41
+
+static int apm_string_has_suffix(const char* str, const char* suffix) {
+    if (!str || !suffix) return 0;
+    size_t str_len = strlen(str);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > str_len) return 0;
+    return strcmp(str + str_len - suffix_len, suffix) == 0;
+}
+
+static const char* apm_basename(const char* path) {
+    if (!path) return NULL;
+    const char* slash = strrchr(path, '/');
+    return slash ? (slash + 1) : path;
+}
+
+static int apm_normalize_module_name(const char* module_name, char* out, size_t out_size) {
+    if (!module_name || !out || out_size == 0) {
+        return -1;
+    }
+
+    const char* base = apm_basename(module_name);
+    if (!base || base[0] == '\0') {
+        return -1;
+    }
+
+    size_t len = strlen(base);
+    if (len >= out_size) {
+        len = out_size - 1;
+    }
+
+    memcpy(out, base, len);
+    out[len] = '\0';
+
+    if (apm_string_has_suffix(out, ".akm")) {
+        out[strlen(out) - 4] = '\0';
+    }
+
+    return out[0] == '\0' ? -1 : 0;
+}
+
+static int apm_build_module_path(const char* module_name, char* module_path, size_t path_size) {
+    if (!module_name || !module_path || path_size == 0) {
+        return -1;
+    }
+
+    if (module_name[0] == '/') {
+        if (strlen(module_name) >= path_size) {
+            return -1;
+        }
+        strcpy(module_path, module_name);
+        return 0;
+    }
+
+    int written = snprintf(module_path, path_size, "%s/%s", APM_MODULE_DIR, module_name);
+    if (written < 0 || (size_t)written >= path_size) {
+        return -1;
+    }
+
+    if (!apm_string_has_suffix(module_path, ".akm")) {
+        if (strlen(module_path) + 4 >= path_size) {
+            return -1;
+        }
+        strcat(module_path, ".akm");
+    }
+
+    return 0;
+}
+
+static int apm_read_module_blob(const char* module_path, uint8_t** data_out, size_t* size_out) {
+    if (!module_path || !data_out || !size_out) {
+        return -1;
+    }
+
+    stat_t st;
+    if (vfs_stat(module_path, &st) < 0 || st.st_size == 0) {
+        return -1;
+    }
+
+    int fd = vfs_open(module_path, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+
+    *data_out = (uint8_t*)kmalloc(st.st_size);
+    if (!*data_out) {
+        vfs_close(fd);
+        return -1;
+    }
+
+    if (vfs_read(fd, *data_out, st.st_size) != (int)st.st_size) {
+        kfree(*data_out);
+        *data_out = NULL;
+        vfs_close(fd);
+        return -1;
+    }
+
+    vfs_close(fd);
+    *size_out = st.st_size;
+    return 0;
+}
+
+static int apm_get_module_identity(const char* module_path, char* module_id, size_t module_id_size, bool* is_v2_out) {
+    if (!module_path || !module_id || module_id_size == 0) {
+        return -1;
+    }
+
+    int fd = vfs_open(module_path, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+
+    uint32_t magic = 0;
+    if (vfs_read(fd, &magic, sizeof(magic)) != sizeof(magic)) {
+        vfs_close(fd);
+        return -1;
+    }
+
+    if (magic == AKM_MAGIC_V2) {
+        akm_header_v2_t hdr;
+        vfs_lseek(fd, 0, SEEK_SET);
+        if (vfs_read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+            vfs_close(fd);
+            return -1;
+        }
+        strncpy(module_id, hdr.name, module_id_size - 1);
+        module_id[module_id_size - 1] = '\0';
+        if (is_v2_out) *is_v2_out = true;
+    } else if (magic == APM_V1_MAGIC) {
+        akm_header_t hdr;
+        vfs_lseek(fd, 0, SEEK_SET);
+        if (vfs_read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+            vfs_close(fd);
+            return -1;
+        }
+        strncpy(module_id, hdr.name, module_id_size - 1);
+        module_id[module_id_size - 1] = '\0';
+        if (is_v2_out) *is_v2_out = false;
+    } else {
+        vfs_close(fd);
+        return -1;
+    }
+
+    vfs_close(fd);
+    return module_id[0] == '\0' ? -1 : 0;
+}
+
+static int apm_read_autoload_entries(char entries[][APM_MAX_NAME_LEN], int max_entries) {
+    if (!entries || max_entries <= 0) return -1;
+
+    int fd = vfs_open(APM_AUTOLOAD_FILE, O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+
+    stat_t st;
+    if (vfs_stat(APM_AUTOLOAD_FILE, &st) < 0 || st.st_size == 0) {
+        vfs_close(fd);
+        return 0;
+    }
+
+    size_t size = st.st_size;
+    if (size > APM_AUTOLOAD_MAX_BYTES) {
+        size = APM_AUTOLOAD_MAX_BYTES;
+    }
+
+    char* data = (char*)kmalloc(size + 1);
+    if (!data) {
+        vfs_close(fd);
+        return -1;
+    }
+
+    int bytes_read = vfs_read(fd, data, size);
+    vfs_close(fd);
+    if (bytes_read <= 0) {
+        kfree(data);
+        return 0;
+    }
+    data[bytes_read] = '\0';
+
+    int count = 0;
+    char* p = data;
+    while (*p && count < max_entries) {
+        while (*p == '\n' || *p == '\r') p++;
+        if (!*p) break;
+
+        char line[APM_MAX_NAME_LEN];
+        int line_len = 0;
+        while (*p && *p != '\n' && *p != '\r') {
+            if (line_len < APM_MAX_NAME_LEN - 1) {
+                line[line_len++] = *p;
+            }
+            p++;
+        }
+        line[line_len] = '\0';
+
+        int start = 0;
+        while (line[start] == ' ' || line[start] == '\t') start++;
+        while (line_len > start && (line[line_len - 1] == ' ' || line[line_len - 1] == '\t')) {
+            line[--line_len] = '\0';
+        }
+
+        if (line[start] != '\0') {
+            char normalized[APM_MAX_NAME_LEN];
+            if (apm_normalize_module_name(line + start, normalized, sizeof(normalized)) == 0) {
+                bool exists = false;
+                for (int i = 0; i < count; i++) {
+                    if (strcmp(entries[i], normalized) == 0) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    strncpy(entries[count], normalized, APM_MAX_NAME_LEN - 1);
+                    entries[count][APM_MAX_NAME_LEN - 1] = '\0';
+                    count++;
+                }
+            }
+        }
+    }
+
+    kfree(data);
+    return count;
+}
+
+static int apm_write_autoload_entries(char entries[][APM_MAX_NAME_LEN], int count) {
+    if (count <= 0) {
+        vfs_unlink(APM_AUTOLOAD_FILE);
+        return 0;
+    }
+
+    int fd = vfs_open(APM_AUTOLOAD_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) {
+        return -1;
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (entries[i][0] == '\0') continue;
+        size_t len = strlen(entries[i]);
+        if (vfs_write(fd, entries[i], len) != (int)len || vfs_write(fd, "\n", 1) != 1) {
+            vfs_close(fd);
+            return -1;
+        }
+    }
+
+    vfs_close(fd);
+    return 0;
+}
 
 // Simple JSON parsing helpers (minimal asf)
 static char* json_find_field(const char* json, const char* field) {
@@ -707,16 +958,269 @@ int apm_install_module(const char* module_name) {
     return 0;
 }
 
+int apm_load_module(const char* module_name) {
+    char module_path[256];
+    bool is_v2 = false;
+    char module_id[MODULE_NAME_LEN];
+    module_id[0] = '\0';
+
+    if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
+        vga_puts("[APM] Error: Invalid module name/path\n");
+        return -1;
+    }
+
+    if (apm_get_module_identity(module_path, module_id, sizeof(module_id), &is_v2) < 0) {
+        vga_puts("[APM] Error: Invalid module file: ");
+        vga_puts(module_path);
+        vga_puts("\n");
+        return -1;
+    }
+
+    int result = 0;
+    if (is_v2) {
+        uint8_t* data = NULL;
+        size_t size = 0;
+
+        if (apm_read_module_blob(module_path, &data, &size) < 0) {
+            vga_puts("[APM] Error: Failed to read module file\n");
+            return -1;
+        }
+
+        result = kmodule_load_v2(data, size);
+        kfree(data);
+    } else {
+        result = kmodule_load(module_path);
+    }
+
+    if (result == 0) {
+        vga_puts("[APM] Loaded module: ");
+        if (module_id[0] != '\0') {
+            vga_puts(module_id);
+        } else {
+            vga_puts(module_name);
+        }
+        vga_puts("\n");
+    } else {
+        vga_puts("[APM] Error: Failed to load module\n");
+    }
+
+    return result;
+}
+
+int apm_unload_module(const char* module_name) {
+    if (!module_name || module_name[0] == '\0') {
+        vga_puts("[APM] Error: Module name required\n");
+        return -1;
+    }
+
+    char normalized_name[APM_MAX_NAME_LEN];
+    if (apm_normalize_module_name(module_name, normalized_name, sizeof(normalized_name)) < 0) {
+        vga_puts("[APM] Error: Invalid module name\n");
+        return -1;
+    }
+
+    char module_path[256];
+    char resolved_name[MODULE_NAME_LEN];
+    resolved_name[0] = '\0';
+    if (apm_build_module_path(module_name, module_path, sizeof(module_path)) == 0) {
+        (void)apm_get_module_identity(module_path, resolved_name, sizeof(resolved_name), NULL);
+    }
+
+    char candidates[3][APM_MAX_NAME_LEN];
+    int candidate_count = 0;
+
+    if (resolved_name[0] != '\0') {
+        strncpy(candidates[candidate_count], resolved_name, APM_MAX_NAME_LEN - 1);
+        candidates[candidate_count][APM_MAX_NAME_LEN - 1] = '\0';
+        candidate_count++;
+    }
+
+    bool seen = false;
+    for (int i = 0; i < candidate_count; i++) {
+        if (strcmp(candidates[i], normalized_name) == 0) {
+            seen = true;
+            break;
+        }
+    }
+    if (!seen && candidate_count < 3) {
+        strncpy(candidates[candidate_count], normalized_name, APM_MAX_NAME_LEN - 1);
+        candidates[candidate_count][APM_MAX_NAME_LEN - 1] = '\0';
+        candidate_count++;
+    }
+
+    const char* base = apm_basename(module_name);
+    if (base && base[0] != '\0') {
+        seen = false;
+        for (int i = 0; i < candidate_count; i++) {
+            if (strcmp(candidates[i], base) == 0) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen && candidate_count < 3) {
+            strncpy(candidates[candidate_count], base, APM_MAX_NAME_LEN - 1);
+            candidates[candidate_count][APM_MAX_NAME_LEN - 1] = '\0';
+            candidate_count++;
+        }
+    }
+
+    for (int i = 0; i < candidate_count; i++) {
+        if (kmodule_unload_v2(candidates[i]) == 0 || kmodule_unload(candidates[i]) == 0) {
+            vga_puts("[APM] Unloaded module: ");
+            vga_puts(candidates[i]);
+            vga_puts("\n");
+            return 0;
+        }
+    }
+
+    vga_puts("[APM] Error: Module is not loaded: ");
+    vga_puts(module_name);
+    vga_puts("\n");
+    return -1;
+}
+
+int apm_set_module_autoload(const char* module_name, bool enabled) {
+    if (!module_name || module_name[0] == '\0') {
+        return -1;
+    }
+
+    char normalized_name[APM_MAX_NAME_LEN];
+    if (apm_normalize_module_name(module_name, normalized_name, sizeof(normalized_name)) < 0) {
+        return -1;
+    }
+
+    if (enabled) {
+        char module_path[256];
+        if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
+            vga_puts("[APM] Error: Invalid module path for autoload\n");
+            return -1;
+        }
+        int fd_check = vfs_open(module_path, O_RDONLY);
+        if (fd_check < 0) {
+            vga_puts("[APM] Error: Module is not installed: ");
+            vga_puts(normalized_name);
+            vga_puts("\n");
+            return -1;
+        }
+        vfs_close(fd_check);
+    }
+
+    char entries[APM_MAX_MODULES][APM_MAX_NAME_LEN];
+    int count = apm_read_autoload_entries(entries, APM_MAX_MODULES);
+    if (count < 0) {
+        vga_puts("[APM] Error: Failed to read autoload configuration\n");
+        return -1;
+    }
+
+    int found_index = -1;
+    for (int i = 0; i < count; i++) {
+        if (strcmp(entries[i], normalized_name) == 0) {
+            found_index = i;
+            break;
+        }
+    }
+
+    if (enabled) {
+        if (found_index >= 0) {
+            vga_puts("[APM] Autoload already enabled for ");
+            vga_puts(normalized_name);
+            vga_puts("\n");
+            return 0;
+        }
+        if (count >= APM_MAX_MODULES) {
+            vga_puts("[APM] Error: Autoload list is full\n");
+            return -1;
+        }
+        strncpy(entries[count], normalized_name, APM_MAX_NAME_LEN - 1);
+        entries[count][APM_MAX_NAME_LEN - 1] = '\0';
+        count++;
+    } else {
+        if (found_index < 0) {
+            return 0;
+        }
+        for (int i = found_index; i < count - 1; i++) {
+            strncpy(entries[i], entries[i + 1], APM_MAX_NAME_LEN - 1);
+            entries[i][APM_MAX_NAME_LEN - 1] = '\0';
+        }
+        entries[count - 1][0] = '\0';
+        count--;
+    }
+
+    if (apm_write_autoload_entries(entries, count) < 0) {
+        vga_puts("[APM] Error: Failed to update autoload configuration\n");
+        return -1;
+    }
+
+    vga_puts("[APM] Autoload ");
+    vga_puts(enabled ? "enabled for " : "disabled for ");
+    vga_puts(normalized_name);
+    vga_puts("\n");
+    return 0;
+}
+
+int apm_list_autoload_modules(void) {
+    char entries[APM_MAX_MODULES][APM_MAX_NAME_LEN];
+    int count = apm_read_autoload_entries(entries, APM_MAX_MODULES);
+    if (count < 0) {
+        vga_puts("[APM] Error: Failed to read autoload list\n");
+        return -1;
+    }
+
+    vga_puts("\nStartup Auto-load Modules:\n");
+    vga_puts("===========================\n");
+    if (count == 0) {
+        vga_puts("  (none)\n");
+        return 0;
+    }
+
+    for (int i = 0; i < count; i++) {
+        vga_puts("  * ");
+        vga_puts(entries[i]);
+        vga_puts("\n");
+    }
+
+    return 0;
+}
+
+int apm_load_startup_modules(void) {
+    char entries[APM_MAX_MODULES][APM_MAX_NAME_LEN];
+    int count = apm_read_autoload_entries(entries, APM_MAX_MODULES);
+    if (count <= 0) {
+        serial_puts("[APM] No startup modules configured\n");
+        return 0;
+    }
+
+    serial_puts("[APM] Loading startup modules...\n");
+    int loaded = 0;
+    int failed = 0;
+
+    for (int i = 0; i < count; i++) {
+        if (apm_load_module(entries[i]) == 0) {
+            loaded++;
+        } else {
+            failed++;
+        }
+    }
+
+    char num[16];
+    serial_puts("[APM] Startup modules loaded: ");
+    itoa(loaded, num, 10);
+    serial_puts(num);
+    serial_puts(", failed: ");
+    itoa(failed, num, 10);
+    serial_puts(num);
+    serial_puts("\n");
+
+    return failed == 0 ? 0 : -1;
+}
+
 int apm_remove_module(const char* module_name) {
     char module_path[256];
-    
-    // Try with .akm extension
-    snprintf(module_path, sizeof(module_path), "%s/%s", APM_MODULE_DIR, module_name);
-    if (!strstr(module_name, ".akm")) {
-        strcat(module_path, ".akm");
+    if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
+        vga_puts("[APM] Error: Invalid module name/path\n");
+        return -1;
     }
-    
-    // Check if file exists
+
     int fd = vfs_open(module_path, O_RDONLY);
     if (fd < 0) {
         vga_puts("[APM] Error: Module '");
@@ -725,20 +1229,32 @@ int apm_remove_module(const char* module_name) {
         return -1;
     }
     vfs_close(fd);
-    
-    // Unload if loaded (try both with and without path)
-    kmodule_unload(module_path);
-    kmodule_unload(module_name);
-    
-    // Remove file
+
+    // Try to unload if loaded; ignore failures.
+    char normalized_name[APM_MAX_NAME_LEN];
+    char resolved_name[MODULE_NAME_LEN];
+    normalized_name[0] = '\0';
+    resolved_name[0] = '\0';
+    if (apm_normalize_module_name(module_name, normalized_name, sizeof(normalized_name)) == 0) {
+        (void)apm_get_module_identity(module_path, resolved_name, sizeof(resolved_name), NULL);
+        if (resolved_name[0] != '\0') {
+            (void)kmodule_unload_v2(resolved_name);
+            (void)kmodule_unload(resolved_name);
+        }
+        (void)kmodule_unload_v2(normalized_name);
+        (void)kmodule_unload(normalized_name);
+    }
+
+    // Remove from startup autoload config as part of deletion.
+    apm_set_module_autoload(module_name, false);
+
     if (vfs_unlink(module_path) < 0) {
         vga_puts("[APM] Error: Failed to remove module file\n");
         return -1;
     }
-    
+
     vga_puts("[APM] Module '");
     vga_puts(module_name);
     vga_puts("' removed successfully\n");
-    
     return 0;
 }
