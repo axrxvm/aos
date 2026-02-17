@@ -112,6 +112,9 @@ int kmodule_unload_v2(const char* name);
 // List v2 modules
 void kmodule_list_v2(void);
 
+// Drive module-managed timer callbacks (called from scheduler tick)
+void kmodule_v2_timer_tick(void);
+
 // Get module context by name
 kmod_ctx_t* kmodule_get_context(const char* name);
 

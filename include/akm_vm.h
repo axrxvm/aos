@@ -85,7 +85,7 @@
 #define AKM_OP_HALT         0x7F
 
 //                           API INDICES
-// Must match tools/akmcc/src/constants.js API_FUNCTIONS order
+// Must match akmcc/src/constants.js API_FUNCTIONS order
 
 #define AKM_API_LOG             0
 #define AKM_API_INFO            1

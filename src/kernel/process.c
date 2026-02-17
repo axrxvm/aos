@@ -463,6 +463,9 @@ void process_sleep(uint32_t milliseconds) {
 // Scheduler tick (called from timer interrupt)
 void scheduler_tick(void) {
     scheduler_ticks++;
+
+    // Service module timers on each scheduler tick.
+    kmodule_v2_timer_tick();
     
     // Wake up sleeping processes
     for (int i = 0; i < MAX_PROCESSES; i++) {

@@ -20,6 +20,9 @@
 #include <stdlib.h>
 #include <serial.h>
 #include <vga.h>
+#include <net/net.h>
+#include <user.h>
+#include <fileperm.h>
 
 /* Forward declarations for kernel functions - avoid header conflicts */
 extern void* kmalloc(size_t size);
@@ -28,7 +31,6 @@ extern int channel_create(void);
 extern int channel_close(int fd);
 extern int channel_write(int fd, const void* data, uint32_t size);
 extern int channel_read(int fd, void* buf, uint32_t size);
-extern void* user_get_session(void);
 extern void kprint(const char* str);
 
 /* External from kmodule_v2.c */
@@ -478,7 +480,37 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
             break;
             
         case AKM_API_NETIF_RECEIVE:
-            result = 0;  /* Stub */
+            {
+                vm_registry_t* reg = get_vm_registry(vm);
+                if (!reg) { result = KMOD_ERR_INVALID; break; }
+
+                int iface_idx = args[0];
+                if (iface_idx < 0 || iface_idx >= reg->netif_count) {
+                    result = KMOD_ERR_INVALID;
+                    break;
+                }
+                if (!reg->netifs[iface_idx].active) {
+                    result = KMOD_ERR_NOTFOUND;
+                    break;
+                }
+                if (!args[1] || args[2] <= 0) {
+                    result = KMOD_ERR_INVALID;
+                    break;
+                }
+
+                net_interface_t* iface = net_interface_get(reg->netifs[iface_idx].name);
+                if (!iface) {
+                    result = KMOD_ERR_NOTFOUND;
+                    break;
+                }
+
+                net_packet_t packet;
+                packet.data = (uint8_t*)(uintptr_t)args[1];
+                packet.len = (uint32_t)args[2];
+                packet.capacity = packet.len;
+
+                result = net_receive_packet(iface, &packet);
+            }
             break;
             
         /* IRQ (29-32) */
@@ -572,11 +604,19 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
             break;
             
         case AKM_API_START_TIMER:
-            result = 0;  /* Auto-starts */
+            if (ctx->start_timer) {
+                result = ctx->start_timer(ctx, args[0]);
+            } else {
+                result = 0;
+            }
             break;
             
         case AKM_API_STOP_TIMER:
-            result = 0;  /* Stub */
+            if (ctx->stop_timer) {
+                result = ctx->stop_timer(ctx, args[0]);
+            } else {
+                result = 0;
+            }
             break;
             
         case AKM_API_DESTROY_TIMER:
@@ -613,8 +653,22 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
             
         /* SYSINFO (55-56) */
         case AKM_API_GET_SYSINFO:
-            /* Return 0 - sysinfo via ctx if needed */
-            result = 0;
+            if (ctx->get_sysinfo && ctx->malloc) {
+                kmod_sysinfo_t* info = (kmod_sysinfo_t*)ctx->malloc(ctx, sizeof(kmod_sysinfo_t));
+                if (info) {
+                    int rc = ctx->get_sysinfo(ctx, info);
+                    if (rc == 0) {
+                        result = (int32_t)(uintptr_t)info;
+                    } else {
+                        if (ctx->free) ctx->free(ctx, info);
+                        result = 0;
+                    }
+                } else {
+                    result = 0;
+                }
+            } else {
+                result = 0;
+            }
             break;
             
         case AKM_API_GET_KERNEL_VER:
@@ -664,25 +718,17 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
         /* USER (63-65) */
         case AKM_API_GET_UID:
             {
-                void* session = user_get_session();
-                if (session) {
-                    /* session->user->uid - offset 32+0=32 from session base */
-                    uint32_t* uid_ptr = (uint32_t*)((uint8_t*)session + 4 + 32);  /* approx */
-                    result = uid_ptr ? (int32_t)*uid_ptr : 0;
-                } else {
-                    result = 0;  /* root */
-                }
+                session_t* session = user_get_session();
+                if (session && session->user) result = (int32_t)session->user->uid;
+                else result = UID_ROOT;
             }
             break;
             
         case AKM_API_GET_USERNAME:
             {
-                void* session = user_get_session();
-                if (session) {
-                    /* Return pointer to username in user struct */
-                    void** user_ptr = (void**)session;
-                    if (*user_ptr) result = (int32_t)(uintptr_t)*user_ptr;
-                    else result = 0;
+                user_t* user = user_find_by_uid((uint32_t)args[0]);
+                if (user) {
+                    result = (int32_t)(uintptr_t)user->username;
                 } else {
                     result = 0;
                 }
@@ -690,7 +736,33 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
             break;
             
         case AKM_API_CHECK_PERM:
-            result = 1;  /* Allow all for now */
+            {
+                const char* resource = akm_vm_get_string(vm, args[0]);
+                int perm = args[1];
+
+                if (!resource || perm < CHECK_VIEW || perm > CHECK_OWN) {
+                    result = KMOD_ERR_INVALID;
+                    break;
+                }
+
+                file_access_t access;
+                if (fileperm_get(resource, &access) != 0) {
+                    result = KMOD_ERR_NOTFOUND;
+                    break;
+                }
+
+                uint32_t requester_id = UID_ROOT;
+                owner_type_t requester_type = OWNER_ROOT;
+                session_t* session = user_get_session();
+                if (session && session->user) {
+                    requester_id = session->user->uid;
+                    if (session->user->uid == UID_ROOT) requester_type = OWNER_ROOT;
+                    else if (session->user->flags & USER_FLAG_ADMIN) requester_type = OWNER_ADMIN;
+                    else requester_type = OWNER_USR;
+                }
+
+                result = fileperm_check(&access, requester_id, requester_type, (access_check_t)perm);
+            }
             break;
             
         /* ARGS/OUTPUT (66-67) */

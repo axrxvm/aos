@@ -31,6 +31,9 @@
 #include <stdlib.h>
 #include <process.h>
 #include <arch.h>
+#include <pmm.h>
+#include <dev/pci.h>
+#include <crypto/sha256.h>
 
 // External memory info from kernel.c
 extern uint32_t total_memory_kb;
@@ -59,14 +62,22 @@ static int module_irq_count = 0;
 typedef struct {
     int id;
     uint32_t interval_ms;
+    uint32_t interval_ticks;
+    uint32_t next_fire_tick;
     void (*callback)(void* data);
     void* data;
     kmod_ctx_t* owner;
-    int active;
+    uint8_t in_use;
+    uint8_t running;
+    uint8_t _padding[2];
 } mod_timer_entry_t;
 
 static mod_timer_entry_t module_timers[MAX_MODULE_TIMERS];
 static int next_timer_id = 1;
+
+#define PCI_CACHE_SIZE 8
+static kmod_pci_device_t pci_cache[PCI_CACHE_SIZE];
+static int pci_cache_index = 0;
 
 // Module VM command handlers - stores mapping from command name to VM handler
 #define MAX_MODULE_COMMANDS 32
@@ -74,6 +85,7 @@ typedef struct {
     char cmd_name[64];
     akm_vm_t* vm;
     uint32_t handler_offset;
+    kmod_ctx_t* owner;
     uint8_t valid;
     uint8_t _padding[3];
 } mod_cmd_entry_t;
@@ -146,8 +158,27 @@ static void api_log(kmod_ctx_t* ctx, int level, const char* fmt, ...) {
 
 static void api_log_hex(kmod_ctx_t* ctx, const void* data, size_t len) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_LOG)) return;
-    (void)data; (void)len;
-    // TODO: implement hex dump
+    if (!data || len == 0) return;
+
+    const uint8_t* bytes = (const uint8_t*)data;
+    static const char hex_chars[] = "0123456789abcdef";
+
+    for (size_t i = 0; i < len; i += 16) {
+        serial_puts("[");
+        serial_puts(ctx->name ? ctx->name : "?");
+        serial_puts("] ");
+
+        for (size_t j = 0; j < 16 && (i + j) < len; j++) {
+            uint8_t b = bytes[i + j];
+            char byte_buf[4];
+            byte_buf[0] = hex_chars[b >> 4];
+            byte_buf[1] = hex_chars[b & 0x0F];
+            byte_buf[2] = ' ';
+            byte_buf[3] = '\0';
+            serial_puts(byte_buf);
+        }
+        serial_puts("\n");
+    }
 }
 
 // --- Memory Management ---
@@ -203,14 +234,6 @@ static mod_cmd_entry_t* find_module_command(const char* name) {
     return NULL;
 }
 
-// Wrapper function for module commands - to be called from command_registry
-static void module_cmd_wrapper(const char* args) {
-    // Get the command name from the VM context
-    // This is tricky - we need to find which command was invoked
-    // For now, we'll search through the module commands
-    (void)args;
-}
-
 // Execute a module VM command
 int execute_module_vm_command(const char* cmd_name, const char* args) {
     if (!cmd_name) return -1;
@@ -232,6 +255,10 @@ int execute_module_vm_command(const char* cmd_name, const char* args) {
     
     // Set the command arguments in the VM so the handler can access them
     mod_cmd->vm->cmd_args = args ? args : "";
+    // Provide first function argument via PUSH_ARG(0) for command handlers.
+    mod_cmd->vm->stack[0] = (int32_t)(uintptr_t)mod_cmd->vm->cmd_args;
+    mod_cmd->vm->sp = 1;
+    mod_cmd->vm->fp = 1;
     
     int max_instructions = 100000;
     int count = 0;
@@ -270,6 +297,7 @@ int register_module_cmd(const char* name, uint32_t handler_offset,
             module_commands[i].cmd_name[63] = '\0';
             module_commands[i].handler_offset = handler_offset;
             module_commands[i].vm = vm;
+            module_commands[i].owner = ctx;
             module_commands[i].valid = 1;
             module_command_count++;
             return i;  // Return slot index
@@ -286,6 +314,7 @@ static void unregister_module_commands(akm_vm_t* vm) {
         if (module_commands[i].valid && module_commands[i].vm == vm) {
             module_commands[i].valid = 0;
             module_commands[i].vm = NULL;
+            module_commands[i].owner = NULL;
             module_command_count--;
         }
     }
@@ -327,9 +356,14 @@ static int api_register_command(kmod_ctx_t* ctx, const kmod_command_t* cmd) {
 static int api_unregister_command(kmod_ctx_t* ctx, const char* name) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_COMMAND)) return KMOD_ERR_CAPABILITY;
     if (!name) return KMOD_ERR_INVALID;
-    // TODO: Implement unregister in command registry
-    (void)name;
-    return KMOD_ERR_INVALID;  // Not implemented yet
+    if (command_unregister(name) != 0) return KMOD_ERR_NOTFOUND;
+    mod_cmd_entry_t* mod_cmd = find_module_command(name);
+    if (mod_cmd && mod_cmd->owner == ctx) {
+        mod_cmd->valid = 0;
+        mod_cmd->vm = NULL;
+        if (module_command_count > 0) module_command_count--;
+    }
+    return KMOD_OK;
 }
 
 // --- Environment Variables ---
@@ -385,35 +419,71 @@ static void api_io_wait(kmod_ctx_t* ctx) {
 }
 
 // --- Timer Functions ---
+static uint32_t timer_ms_to_ticks(uint32_t interval_ms) {
+    uint32_t hz = arch_timer_get_frequency();
+    if (hz == 0) hz = 100;
+
+    // Use 32-bit arithmetic only so freestanding i386 builds do not
+    // pull in 64-bit division helpers (e.g. __udivdi3).
+    uint32_t sec = interval_ms / 1000U;
+    uint32_t rem_ms = interval_ms % 1000U;
+
+    uint32_t whole_ticks;
+    if (sec != 0U && hz > (0xFFFFFFFFU / sec)) {
+        whole_ticks = 0xFFFFFFFFU;
+    } else {
+        whole_ticks = sec * hz;
+    }
+
+    uint32_t rem_ticks_num;
+    if (rem_ms != 0U && hz > (0xFFFFFFFFU / rem_ms)) {
+        rem_ticks_num = 0xFFFFFFFFU;
+    } else {
+        rem_ticks_num = rem_ms * hz;
+    }
+
+    uint32_t rem_ticks = rem_ticks_num / 1000U;
+    if ((rem_ticks_num % 1000U) != 0U && rem_ticks < 0xFFFFFFFFU) {
+        rem_ticks++;
+    }
+
+    if (whole_ticks > (0xFFFFFFFFU - rem_ticks)) {
+        whole_ticks = 0xFFFFFFFFU;
+    } else {
+        whole_ticks += rem_ticks;
+    }
+
+    if (whole_ticks == 0) whole_ticks = 1;
+    return whole_ticks;
+}
+
 static uint32_t api_get_ticks(kmod_ctx_t* ctx) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return 0;
-    // TODO: Return actual tick count from timer system
-    return 0;
+    return arch_timer_get_ticks();
 }
 
 static void api_sleep_ms(kmod_ctx_t* ctx, uint32_t ms) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return;
-    // Simple busy-wait sleep (not ideal but works)
-    volatile uint32_t count = ms * 10000;
-    while (count-- > 0) {
-        __asm__ volatile ("nop");
-    }
+    process_sleep(ms);
 }
 
 static int api_create_timer(kmod_ctx_t* ctx, uint32_t interval_ms, 
                            void (*callback)(void* data), void* data) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return KMOD_ERR_CAPABILITY;
-    if (!callback) return KMOD_ERR_INVALID;
+    if (!callback || interval_ms == 0) return KMOD_ERR_INVALID;
     
     // Find free slot
     for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
-        if (!module_timers[i].active) {
+        if (!module_timers[i].in_use) {
             module_timers[i].id = next_timer_id++;
             module_timers[i].interval_ms = interval_ms;
+            module_timers[i].interval_ticks = timer_ms_to_ticks(interval_ms);
+            module_timers[i].next_fire_tick = arch_timer_get_ticks() + module_timers[i].interval_ticks;
             module_timers[i].callback = callback;
             module_timers[i].data = data;
             module_timers[i].owner = ctx;
-            module_timers[i].active = 1;
+            module_timers[i].in_use = 1;
+            module_timers[i].running = 0;
             return module_timers[i].id;
         }
     }
@@ -424,9 +494,10 @@ static int api_start_timer(kmod_ctx_t* ctx, int timer_id) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return KMOD_ERR_CAPABILITY;
     
     for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
-        if (module_timers[i].active && module_timers[i].id == timer_id) {
+        if (module_timers[i].in_use && module_timers[i].id == timer_id) {
             if (module_timers[i].owner != ctx) return KMOD_ERR_CAPABILITY;
-            // Timer is already active, nothing to do
+            module_timers[i].running = 1;
+            module_timers[i].next_fire_tick = arch_timer_get_ticks() + module_timers[i].interval_ticks;
             return 0;
         }
     }
@@ -437,10 +508,9 @@ static int api_stop_timer(kmod_ctx_t* ctx, int timer_id) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return KMOD_ERR_CAPABILITY;
     
     for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
-        if (module_timers[i].active && module_timers[i].id == timer_id) {
+        if (module_timers[i].in_use && module_timers[i].id == timer_id) {
             if (module_timers[i].owner != ctx) return KMOD_ERR_CAPABILITY;
-            // Mark as inactive but don't free slot
-            module_timers[i].active = 0;
+            module_timers[i].running = 0;
             return 0;
         }
     }
@@ -451,11 +521,28 @@ static void api_destroy_timer(kmod_ctx_t* ctx, int timer_id) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_TIMER)) return;
     
     for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
-        if (module_timers[i].active && module_timers[i].id == timer_id) {
+        if (module_timers[i].in_use && module_timers[i].id == timer_id) {
             if (module_timers[i].owner != ctx) return;
-            module_timers[i].active = 0;
+            memset(&module_timers[i], 0, sizeof(module_timers[i]));
             return;
         }
+    }
+}
+
+void kmodule_v2_timer_tick(void) {
+    uint32_t now = arch_timer_get_ticks();
+
+    for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
+        mod_timer_entry_t* timer = &module_timers[i];
+        if (!timer->in_use || !timer->running || !timer->callback) continue;
+
+        // Signed subtraction handles wrap-around of the tick counter.
+        if ((int32_t)(now - timer->next_fire_tick) < 0) continue;
+
+        // Schedule next fire before invoking callback so callback-side stop/destroy
+        // operations can safely override state.
+        timer->next_fire_tick = now + timer->interval_ticks;
+        timer->callback(timer->data);
     }
 }
 
@@ -468,12 +555,12 @@ static int api_get_sysinfo(kmod_ctx_t* ctx, kmod_sysinfo_t* info) {
     info->kernel_version = kernel_get_version();
     info->api_version = KMOD_API_VERSION;
     info->total_memory = total_memory_kb * 1024;  // Convert KB to bytes
-    info->free_memory = 0;  // TODO: track free memory
-    info->cpu_count = 1;  // TODO: detect SMP
+    info->free_memory = pmm_get_free_frames() * 4096;
+    info->cpu_count = 1;
     info->module_count = v2_module_count;
     strncpy(info->kernel_name, "aOS", 31);
     strncpy(info->arch, arch_get_name(), 15);
-    info->uptime_ticks = 0;  // TODO: track uptime
+    info->uptime_ticks = arch_timer_get_ticks();
     
     return 0;
 }
@@ -517,17 +604,17 @@ static int api_unregister_irq(kmod_ctx_t* ctx, uint8_t irq) {
 
 static void api_enable_irq(kmod_ctx_t* ctx, uint8_t irq) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_IRQ)) return;
-    (void)irq;
-    // TODO: unmask IRQ in PIC
+    if (irq > 15) return;
+    arch_enable_irq(irq);
 }
 
 static void api_disable_irq(kmod_ctx_t* ctx, uint8_t irq) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_IRQ)) return;
-    (void)irq;
-    // TODO: mask IRQ in PIC
+    if (irq > 15) return;
+    arch_disable_irq(irq);
 }
 
-// --- VFS stubs ---
+// --- VFS wrappers ---
 static int api_vfs_open(kmod_ctx_t* ctx, const char* path, uint32_t flags) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_FILESYSTEM)) return -1;
     if (!path) return -1;
@@ -556,66 +643,113 @@ static int api_vfs_seek(kmod_ctx_t* ctx, int fd, int32_t offset, int whence) {
     return sys_lseek(fd, offset, whence);
 }
 
-// --- Process stubs ---
+// --- Process management ---
 static int api_spawn(kmod_ctx_t* ctx, const char* name, void (*entry)(void), int priority) {
-    if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return -1;
-    (void)name; (void)entry; (void)priority;
-    return -1;  // TODO: implement
+    if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return KMOD_ERR_CAPABILITY;
+    if (!name || !name[0] || !entry) return KMOD_ERR_INVALID;
+    int pid = process_create(name, entry, priority);
+    if (pid < 0) return KMOD_ERR_LIMIT;
+    return pid;
 }
 
 static int api_kill(kmod_ctx_t* ctx, int pid, int signal) {
-    if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return -1;
-    (void)pid; (void)signal;
-    return -1;  // TODO: implement
+    if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return KMOD_ERR_CAPABILITY;
+    if (pid <= 0) return KMOD_ERR_INVALID;
+    if (process_kill(pid, signal) != 0) return KMOD_ERR_NOTFOUND;
+    return KMOD_OK;
 }
 
 static int api_getpid(kmod_ctx_t* ctx) {
-    if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return -1;
-    return 0;  // Kernel context has PID 0
+    if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return KMOD_ERR_CAPABILITY;
+    return process_getpid();
 }
 
 static void api_yield(kmod_ctx_t* ctx) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_PROCESS)) return;
-    // TODO: implement scheduler yield
+    process_yield();
 }
 
-// --- PCI stubs ---
+static kmod_pci_device_t* cache_pci_device(uint8_t bus, uint8_t slot, uint8_t func) {
+    kmod_pci_device_t* out = &pci_cache[pci_cache_index];
+    pci_cache_index = (pci_cache_index + 1) % PCI_CACHE_SIZE;
+
+    memset(out, 0, sizeof(*out));
+    out->bus = bus;
+    out->slot = slot;
+    out->func = func;
+    out->vendor_id = pci_read_config_word(bus, slot, func, PCI_VENDOR_ID);
+    out->device_id = pci_read_config_word(bus, slot, func, PCI_DEVICE_ID);
+    out->class_code = pci_read_config_byte(bus, slot, func, PCI_CLASS_CODE);
+    out->subclass = pci_read_config_byte(bus, slot, func, PCI_SUBCLASS);
+    out->prog_if = pci_read_config_byte(bus, slot, func, PCI_PROG_IF);
+    out->revision = pci_read_config_byte(bus, slot, func, PCI_REVISION_ID);
+    out->irq = pci_read_config_byte(bus, slot, func, PCI_INTERRUPT_LINE);
+    for (int i = 0; i < 6; i++) {
+        out->bar[i] = pci_read_config(bus, slot, func, PCI_BAR0 + (i * 4));
+    }
+    return out;
+}
+
+// --- PCI access ---
 static kmod_pci_device_t* api_pci_find_device(kmod_ctx_t* ctx, uint16_t vendor, uint16_t device) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_PCI)) return NULL;
-    (void)vendor; (void)device;
-    return NULL;  // TODO: implement
+    pci_device_t* dev = pci_find_device(vendor, device);
+    if (!dev) return NULL;
+    return cache_pci_device(dev->bus, dev->device, dev->function);
 }
 
 static kmod_pci_device_t* api_pci_find_class(kmod_ctx_t* ctx, uint8_t class_code, uint8_t subclass) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_PCI)) return NULL;
-    (void)class_code; (void)subclass;
-    return NULL;  // TODO: implement
+    // Full PCI scan for class/subclass match.
+    for (uint16_t bus = 0; bus < 256; bus++) {
+        for (uint8_t slot = 0; slot < 32; slot++) {
+            uint16_t vendor = pci_read_config_word(bus, slot, 0, PCI_VENDOR_ID);
+            if (vendor == 0xFFFF) continue;
+
+            uint8_t header = pci_read_config_byte(bus, slot, 0, PCI_HEADER_TYPE);
+            uint8_t max_func = (header & 0x80) ? 8 : 1;
+
+            for (uint8_t func = 0; func < max_func; func++) {
+                vendor = pci_read_config_word(bus, slot, func, PCI_VENDOR_ID);
+                if (vendor == 0xFFFF) continue;
+
+                uint8_t dev_class = pci_read_config_byte(bus, slot, func, PCI_CLASS_CODE);
+                uint8_t dev_sub = pci_read_config_byte(bus, slot, func, PCI_SUBCLASS);
+                if (dev_class == class_code && dev_sub == subclass) {
+                    return cache_pci_device((uint8_t)bus, slot, func);
+                }
+            }
+        }
+    }
+    return NULL;
 }
 
 static uint32_t api_pci_read_config(kmod_ctx_t* ctx, kmod_pci_device_t* dev, uint8_t offset) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_PCI)) return 0xFFFFFFFF;
-    (void)dev; (void)offset;
-    return 0xFFFFFFFF;  // TODO: implement
+    if (!dev) return 0xFFFFFFFF;
+    return pci_read_config(dev->bus, dev->slot, dev->func, offset);
 }
 
 static void api_pci_write_config(kmod_ctx_t* ctx, kmod_pci_device_t* dev, 
                                  uint8_t offset, uint32_t val) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_PCI)) return;
-    (void)dev; (void)offset; (void)val;
-    // TODO: implement
+    if (!dev) return;
+    pci_write_config(dev->bus, dev->slot, dev->func, offset, val);
 }
 
 static void api_pci_enable_busmaster(kmod_ctx_t* ctx, kmod_pci_device_t* dev) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_PCI)) return;
-    (void)dev;
-    // TODO: implement
+    if (!dev) return;
+    uint16_t cmd = pci_read_config_word(dev->bus, dev->slot, dev->func, PCI_COMMAND);
+    cmd |= PCI_COMMAND_MASTER;
+    pci_write_config_word(dev->bus, dev->slot, dev->func, PCI_COMMAND, cmd);
 }
 
-// --- Crypto stubs ---
+// --- Crypto ---
 static void api_sha256(kmod_ctx_t* ctx, const void* data, size_t len, uint8_t* hash) {
     if (!ctx || !check_cap(ctx, KMOD_CAP_CRYPTO)) return;
-    (void)data; (void)len; (void)hash;
-    // TODO: implement using crypto/sha256.h
+    if (!data || !hash) return;
+    sha256_hash((const uint8_t*)data, len, hash);
 }
 
 static int api_random_bytes(kmod_ctx_t* ctx, void* buf, size_t len) {
@@ -727,6 +861,7 @@ void init_kmodules_v2(void) {
     
     // Initialize timer slots
     memset(module_timers, 0, sizeof(module_timers));
+    next_timer_id = 1;
     
     // Initialize IRQ slots
     memset(module_irqs, 0, sizeof(module_irqs));
@@ -882,6 +1017,7 @@ int kmodule_load_v2(const void* data, size_t len) {
     
     // Initialize context with capabilities
     init_module_context(&entry->context, hdr->name, hdr->capabilities);
+    entry->context._module = entry;
     
     // Get string table info for bytecode modules
     const char* strtab = NULL;
@@ -989,8 +1125,8 @@ static void cleanup_module_resources(kmod_ctx_t* ctx, akm_vm_t* vm) {
     
     // Cleanup timers
     for (int i = 0; i < MAX_MODULE_TIMERS; i++) {
-        if (module_timers[i].active && module_timers[i].owner == ctx) {
-            module_timers[i].active = 0;
+        if (module_timers[i].in_use && module_timers[i].owner == ctx) {
+            memset(&module_timers[i], 0, sizeof(module_timers[i]));
         }
     }
     

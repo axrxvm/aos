@@ -61,6 +61,25 @@ void command_register_with_category(const char* name, const char* syntax, const 
     num_registered_commands++;
 }
 
+int command_unregister(const char* name) {
+    if (!name || !name[0]) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i < num_registered_commands; i++) {
+        const char* cmd_name = command_registry[i].name;
+        if (cmd_name && strcmp(cmd_name, name) == 0) {
+            for (uint32_t j = i; j + 1 < num_registered_commands; j++) {
+                command_registry[j] = command_registry[j + 1];
+            }
+            num_registered_commands--;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 void init_commands(void) {
     serial_puts("Initializing command system...\n");
     num_registered_commands = 0;

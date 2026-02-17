@@ -31,6 +31,7 @@ typedef struct {
 // Command registry functions (to be called by command modules)
 void command_register(const char* name, const char* syntax, const char* description, command_handler_t handler);
 void command_register_with_category(const char* name, const char* syntax, const char* description, const char* category, command_handler_t handler);
+int command_unregister(const char* name);
 
 // Command system initialization and execution
 void init_commands(void);
