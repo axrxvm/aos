@@ -95,7 +95,7 @@ static void register_component_task(const char* name, task_type_t type, int prio
     }
 }
 
-void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
+void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     // Initialize Kernel Recovery Mode FIRST - before any other subsystems
     // This ensures KRM is always available if anything goes wrong anywhere
     krm_init();
@@ -122,10 +122,28 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     serial_puts("Mouse Initialized (polling mode).\n");
 
 
-    // Assuming Multiboot 1, magic is 0x1BADB002.
-    // multiboot.h might define MULTIBOOT_HEADER_MAGIC or similar.
-    if (multiboot_magic != 0x1BADB002) {
+    if (multiboot_magic != MULTIBOOT_BOOTLOADER_MAGIC &&
+        multiboot_magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
+        serial_puts("Invalid boot magic: 0x");
+        serial_put_uint32(multiboot_magic);
+        serial_puts("\nExpected 0x");
+        serial_put_uint32(MULTIBOOT_BOOTLOADER_MAGIC);
+        serial_puts(" (Multiboot1) or 0x");
+        serial_put_uint32(MULTIBOOT2_BOOTLOADER_MAGIC);
+        serial_puts(" (Multiboot2)\n");
         panic("Invalid Multiboot magic number!");
+    }
+
+    if (!raw_boot_info) {
+        panic("Bootloader did not provide boot info pointer!");
+    }
+
+    boot_info_init(multiboot_magic, raw_boot_info);
+    const multiboot_info_t* multiboot_info = boot_info_get_multiboot();
+    const boot_runtime_info_t* boot_runtime = boot_info_get_runtime();
+
+    if (boot_runtime->protocol == BOOT_PROTOCOL_UNKNOWN) {
+        panic("Unsupported boot protocol!");
     }
 
     // Check for mmap presence (bit 6) for print_memory_info, and mem_lower/upper (bit 0) for total_memory_kb
@@ -134,9 +152,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     } else {
         kprint("Memory map not available via Multiboot.");
     }
-    if (multiboot_info) { // General print_boot_info if multiboot_info is not null
-        print_boot_info(multiboot_info);
-    }
+    boot_info_print_serial();
 
 
     vga_init(); // Initialize VGA text mode.
@@ -144,7 +160,7 @@ void kernel_main(uint32_t multiboot_magic, multiboot_info_t *multiboot_info) {
     
     // Pass multiboot info to VGA driver for VBE information
     if (multiboot_info) {
-        vga_set_multiboot_info(multiboot_info);
+        vga_set_multiboot_info((multiboot_info_t*)multiboot_info);
     }
     
     // Center the ASCII art (VGA is 80 columns, art is ~20 chars wide)

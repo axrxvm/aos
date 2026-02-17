@@ -16,6 +16,8 @@
 // Multiboot header magic
 #define MULTIBOOT_HEADER_MAGIC     0x1BADB002
 #define MULTIBOOT_BOOTLOADER_MAGIC 0x2BADB002
+#define MULTIBOOT2_HEADER_MAGIC     0xE85250D6
+#define MULTIBOOT2_BOOTLOADER_MAGIC 0x36D76289
 
 // Multiboot info flags
 #define MULTIBOOT_INFO_MEMORY             0x00000001
@@ -31,6 +33,25 @@
 #define MULTIBOOT_INFO_APM_TABLE          0x00000400
 #define MULTIBOOT_INFO_VBE_INFO           0x00000800
 #define MULTIBOOT_INFO_FRAMEBUFFER_INFO   0x00001000
+
+// Multiboot2 information tags
+#define MULTIBOOT2_TAG_TYPE_END              0
+#define MULTIBOOT2_TAG_TYPE_CMDLINE          1
+#define MULTIBOOT2_TAG_TYPE_BOOT_LOADER_NAME 2
+#define MULTIBOOT2_TAG_TYPE_MODULE           3
+#define MULTIBOOT2_TAG_TYPE_BASIC_MEMINFO    4
+#define MULTIBOOT2_TAG_TYPE_BOOTDEV          5
+#define MULTIBOOT2_TAG_TYPE_MMAP             6
+#define MULTIBOOT2_TAG_TYPE_VBE              7
+#define MULTIBOOT2_TAG_TYPE_FRAMEBUFFER      8
+#define MULTIBOOT2_TAG_TYPE_APM              10
+
+// Multiboot2 memory map entry types
+#define MULTIBOOT2_MMAP_TYPE_AVAILABLE           1
+#define MULTIBOOT2_MMAP_TYPE_RESERVED            2
+#define MULTIBOOT2_MMAP_TYPE_ACPI_RECLAIMABLE    3
+#define MULTIBOOT2_MMAP_TYPE_NVS                 4
+#define MULTIBOOT2_MMAP_TYPE_BADRAM              5
 
 // VBE mode info structure
 typedef struct {
@@ -168,6 +189,112 @@ typedef struct {
     uint64_t len;
     uint32_t type;
 } __attribute__((packed)) multiboot_memory_map_t;
+
+// Multiboot2 information header
+typedef struct {
+    uint32_t total_size;
+    uint32_t reserved;
+} __attribute__((packed)) multiboot2_info_t;
+
+// Multiboot2 generic tag header
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+} __attribute__((packed)) multiboot2_tag_t;
+
+// Multiboot2 null-terminated string tags
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    char string[0];
+} __attribute__((packed)) multiboot2_tag_string_t;
+
+// Multiboot2 module tag
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint32_t mod_start;
+    uint32_t mod_end;
+    char cmdline[0];
+} __attribute__((packed)) multiboot2_tag_module_t;
+
+// Multiboot2 basic memory info tag
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint32_t mem_lower;
+    uint32_t mem_upper;
+} __attribute__((packed)) multiboot2_tag_basic_meminfo_t;
+
+// Multiboot2 boot device tag
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint32_t biosdev;
+    uint32_t slice;
+    uint32_t part;
+} __attribute__((packed)) multiboot2_tag_bootdev_t;
+
+// Multiboot2 memory map tag header
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint32_t entry_size;
+    uint32_t entry_version;
+} __attribute__((packed)) multiboot2_tag_mmap_t;
+
+// Multiboot2 memory map entry
+typedef struct {
+    uint64_t addr;
+    uint64_t len;
+    uint32_t type;
+    uint32_t reserved;
+} __attribute__((packed)) multiboot2_mmap_entry_t;
+
+// Multiboot2 VBE tag
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint16_t vbe_mode;
+    uint16_t vbe_interface_seg;
+    uint16_t vbe_interface_off;
+    uint16_t vbe_interface_len;
+    uint8_t vbe_control_info[512];
+    uint8_t vbe_mode_info[256];
+} __attribute__((packed)) multiboot2_tag_vbe_t;
+
+// Multiboot2 framebuffer common header
+typedef struct {
+    uint32_t type;
+    uint32_t size;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t framebuffer_bpp;
+    uint8_t framebuffer_type;
+    uint16_t reserved;
+} __attribute__((packed)) multiboot2_tag_framebuffer_common_t;
+
+// Multiboot2 indexed framebuffer tail
+typedef struct {
+    uint16_t framebuffer_palette_num_colors;
+    struct {
+        uint8_t red;
+        uint8_t green;
+        uint8_t blue;
+    } __attribute__((packed)) framebuffer_palette[0];
+} __attribute__((packed)) multiboot2_tag_framebuffer_indexed_t;
+
+// Multiboot2 RGB framebuffer tail
+typedef struct {
+    uint8_t framebuffer_red_field_position;
+    uint8_t framebuffer_red_mask_size;
+    uint8_t framebuffer_green_field_position;
+    uint8_t framebuffer_green_mask_size;
+    uint8_t framebuffer_blue_field_position;
+    uint8_t framebuffer_blue_mask_size;
+} __attribute__((packed)) multiboot2_tag_framebuffer_rgb_t;
 
 // Module structure
 typedef struct {

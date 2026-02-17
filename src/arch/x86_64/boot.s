@@ -65,6 +65,12 @@ tss_rsp0:
     resw 1                           ; I/O map base
 tss64_end:
 
+alignb 4
+mb_magic_saved:
+    resd 1
+mb_info_saved:
+    resd 1
+
 alignb 4096
 pml4_table:
     resq 512
@@ -82,6 +88,10 @@ _start:
 
     ; Temporary stack in 32-bit mode
     mov esp, stack_top
+
+    ; Preserve GRUB multiboot magic and info pointer across mode switch setup.
+    mov [mb_magic_saved], eax
+    mov [mb_info_saved], ebx
 
     ; Zero page tables: PML4 + PDPT + 4xPD = 6 tables = 24576 bytes
     mov edi, pml4_table
@@ -217,9 +227,9 @@ long_mode_entry:
     mov rsp, stack_top
     xor rbp, rbp
 
-    ; Keep current kernel_main signature (multiboot1 magic + pointer)
-    mov edi, 0x1BADB002
-    xor esi, esi
+    ; Pass the original GRUB values to kernel_main.
+    mov edi, dword [rel mb_magic_saved]
+    mov esi, dword [rel mb_info_saved]
 
     call kernel_main
 

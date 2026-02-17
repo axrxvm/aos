@@ -19,6 +19,7 @@
 #include <acpi.h>
 #include <shell.h>
 #include <panic.h>  // For test panic command
+#include <boot_info.h>
 
 // Forward declarations
 extern void kprint(const char *str);
@@ -211,6 +212,11 @@ static void cmd_version(const char* args) {
     vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
     kprint(AOS_VERSION);
     vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
+static void cmd_bootinfo(const char* args) {
+    (void)args; // Unused
+    boot_info_print_console();
 }
 
 static void cmd_clear(const char* args) {
@@ -424,6 +430,7 @@ static void cmd_test_panic(const char* args) {
 void cmd_module_core_register(void) {
     command_register_with_category("help", "[category]", "Display all available commands organized by category", "System", cmd_help);
     command_register_with_category("version", "", "Display operating system version information", "System", cmd_version);
+    command_register_with_category("bootinfo", "", "Display parsed Multiboot boot information", "System", cmd_bootinfo);
     command_register_with_category("clear", "", "Clear the screen and reset cursor position", "System", cmd_clear);
     command_register_with_category("echo", "[-n] [-e] [-c] <text>", "Echo text to screen (-n: no newline, -e: interpret escapes, -c: clear first)", "System", cmd_echo);
     command_register_with_category("uptime", "", "Display system uptime", "System", cmd_uptime);

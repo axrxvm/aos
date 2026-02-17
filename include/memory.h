@@ -24,6 +24,6 @@ void free_page(void* page);
 void init_pmm(uint32_t mem_size);
 
 // Memory information
-void print_memory_info(multiboot_info_t* mbi);
+void print_memory_info(const multiboot_info_t* mbi);
 
 #endif

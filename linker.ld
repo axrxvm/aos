@@ -15,6 +15,10 @@ SECTIONS {
         KEEP(*(.multiboot))
     } :text
 
+    .multiboot2 ALIGN(8) : AT(ADDR(.multiboot2)) {
+        KEEP(*(.multiboot2))
+    } :text
+
     .text ALIGN(4096) : {
         *(.text*)
     } :text
