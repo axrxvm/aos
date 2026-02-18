@@ -11,7 +11,6 @@
  * AKM Virtual Machine Implementation
  * 
  * Stack-based bytecode interpreter for JavaScript-compiled kernel modules.
- * Military-grade implementation with comprehensive safety checks.
  */
 
 #include <akm_vm.h>

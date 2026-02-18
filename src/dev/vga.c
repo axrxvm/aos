@@ -1337,6 +1337,10 @@ int vga_set_mode(uint16_t mode) {
     // VBE modes
     if (mode >= 0x100) {
         if (!vbe_available) return 0;
+
+        vga_mode_info_t previous_mode_info = current_mode_info;
+        uint8_t* previous_framebuffer = graphics_framebuffer;
+        int previous_graphics_enabled = graphics_mode_enabled;
         
         vbe_mode_info_t mode_info;
         if (!vga_get_vbe_mode_info(mode, &mode_info)) {
@@ -1380,10 +1384,11 @@ int vga_set_mode(uint16_t mode) {
             
             return 1;
         } else {
-            serial_puts("VBE mode set via BIOS failed, using direct access\n");
-            // Even if BIOS call fails, we can still try to use the framebuffer
-            // Some systems have VBE modes already set by bootloader
-            return 1;
+            serial_puts("VBE mode set via BIOS failed\n");
+            current_mode_info = previous_mode_info;
+            graphics_framebuffer = previous_framebuffer;
+            graphics_mode_enabled = previous_graphics_enabled;
+            return 0;
         }
     }
     
