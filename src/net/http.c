@@ -30,13 +30,27 @@
 #define HTTP_CONNECT_TIMEOUT 10000
 #define HTTP_RECV_TIMEOUT 30000
 
+static http_https_mode_t g_https_mode = HTTP_HTTPS_MODE_COMPAT;
+
 
 // Initialization
 
 
 void http_init(void) {
     serial_puts("Initializing HTTP client...\n");
+    serial_puts("HTTP: HTTPS mode = ");
+    serial_puts(g_https_mode == HTTP_HTTPS_MODE_STRICT ? "strict\n" : "compat (insecure downgrade enabled)\n");
     serial_puts("HTTP client initialized.\n");
+}
+
+void http_set_https_mode(http_https_mode_t mode) {
+    if (mode == HTTP_HTTPS_MODE_STRICT || mode == HTTP_HTTPS_MODE_COMPAT) {
+        g_https_mode = mode;
+    }
+}
+
+http_https_mode_t http_get_https_mode(void) {
+    return g_https_mode;
 }
 
 
@@ -370,8 +384,10 @@ int http_send(http_request_t* request, http_response_t* response) {
         return -1;
     }
     
-    // Determine if this is HTTPS
-    int use_https = (request->port == HTTPS_PORT);
+    // Transport state for this request (may downgrade in compat mode).
+    uint16_t connect_port = request->port;
+    int use_https = (connect_port == HTTPS_PORT);
+    int allow_https_fallback = (use_https && g_https_mode == HTTP_HTTPS_MODE_COMPAT);
     
     // Resolve hostname
     uint32_t ip_addr;
@@ -382,31 +398,34 @@ int http_send(http_request_t* request, http_response_t* response) {
         return -1;
     }
     
+    tcp_socket_t* sock = NULL;
+    tls_session_t* tls = NULL;
+    
+connect_retry:
     serial_puts(use_https ? "HTTPS: " : "HTTP: ");
     serial_puts("Connecting to ");
     serial_puts(ip_to_string(ip_addr));
     serial_puts(":");
     char port_str[8];
-    itoa(request->port, port_str, 10);
+    itoa(connect_port, port_str, 10);
     serial_puts(port_str);
     serial_puts("\n");
     
     // Create and connect socket
-    tcp_socket_t* sock = tcp_socket_create();
+    sock = tcp_socket_create();
     if (!sock) {
         serial_puts("HTTP: Socket creation failed\n");
         return -1;
     }
     
     // Use blocking connect
-    if (tcp_socket_connect_blocking(sock, ip_addr, request->port, HTTP_CONNECT_TIMEOUT) != 0) {
+    if (tcp_socket_connect_blocking(sock, ip_addr, connect_port, HTTP_CONNECT_TIMEOUT) != 0) {
         serial_puts("HTTP: Connection failed\n");
         tcp_socket_close(sock);
         return -1;
     }
     
     // If HTTPS, establish TLS session
-    tls_session_t* tls = NULL;
     if (use_https) {
         serial_puts("HTTPS: Establishing TLS connection...\n");
         tls = tls_session_create(sock, request->host);
@@ -419,7 +438,18 @@ int http_send(http_request_t* request, http_response_t* response) {
         if (tls_handshake(tls) != 0) {
             serial_puts("HTTPS: TLS handshake failed\n");
             tls_session_free(tls);
+            tls = NULL;
             tcp_socket_close(sock);
+            sock = NULL;
+            
+            if (allow_https_fallback && connect_port == HTTPS_PORT) {
+                serial_puts("HTTPS: compat mode fallback -> retrying insecure HTTP on port 80\n");
+                connect_port = HTTP_PORT;
+                use_https = 0;
+                allow_https_fallback = 0;
+                goto connect_retry;
+            }
+            
             return -1;
         }
         serial_puts("HTTPS: TLS connection established\n");
@@ -623,7 +653,8 @@ int http_send(http_request_t* request, http_response_t* response) {
     
     tcp_socket_close(sock);
     
-    serial_puts("HTTP: Response received, status ");
+    serial_puts(use_https ? "HTTPS: " : "HTTP: ");
+    serial_puts("Response received, status ");
     char status_str[8];
     itoa(response->status_code, status_str, 10);
     serial_puts(status_str);

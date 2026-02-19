@@ -23,6 +23,8 @@
 #include <stdlib.h>
 #include <fileperm.h>
 #include <process.h>
+#include <time_subsystem.h>
+#include <arch.h>
 
 #include <serial.h>
 #include <vmm.h>
@@ -93,10 +95,40 @@ static filesystem_t simplefs_filesystem = {
 
 // Get current time (placeholder - returns 0 until we have a real-time clock)
 static uint32_t get_current_time(void) {
-    // TODO: Implement RTC driver to get actual time
-    // For now, return a monotonic counter or 0
-    static uint32_t counter = 0;
-    return counter++;
+    aos_datetime_t now;
+    if (time_get_datetime(&now) == 0 && now.year >= 1970) {
+        static const uint8_t month_days[12] = {
+            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+        };
+
+        uint32_t days = 0;
+        for (uint32_t y = 1970; y < now.year; y++) {
+            int leap = ((y % 4) == 0 && ((y % 100) != 0 || (y % 400) == 0));
+            days += leap ? 366U : 365U;
+        }
+
+        for (uint32_t m = 1; m < now.month && m <= 12; m++) {
+            days += month_days[m - 1];
+            if (m == 2) {
+                int leap = ((now.year % 4) == 0 &&
+                            ((now.year % 100) != 0 || (now.year % 400) == 0));
+                if (leap) days++;
+            }
+        }
+
+        if (now.day > 0) {
+            days += (uint32_t)(now.day - 1);
+        }
+
+        return days * 86400U +
+               (uint32_t)now.hour * 3600U +
+               (uint32_t)now.minute * 60U +
+               (uint32_t)now.second;
+    }
+
+    uint32_t hz = arch_timer_get_frequency();
+    if (hz == 0) hz = 100;
+    return arch_timer_get_ticks() / hz;
 }
 
 // Calculate simple checksum for data
@@ -653,10 +685,12 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
         // serial_puts("SimpleFS: Filesystem not clean, recovery needed\n");
         fs_data->superblock.state = SIMPLEFS_JOURNAL_RECOVERING;
         write_block(fs_data, 0, &fs_data->superblock);
-        
-        // TODO: Implement journal recovery
-        // simplefs_journal_recover(fs_data);
-        
+
+        if (simplefs_journal_recover(fs_data) != 0) {
+            kfree(fs_data);
+            return VFS_ERR_IO;
+        }
+
         fs_data->superblock.state = SIMPLEFS_JOURNAL_CLEAN;
     }
     
@@ -1012,8 +1046,6 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
         return NULL;
     }
     
-    (void)flags; // TODO: Use flags for permissions
-    
     // serial_puts("SimpleFS: Creating file '");
     // serial_puts(name);
     // serial_puts("'\n");
@@ -1036,7 +1068,14 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
     
     // Initialize inode
     simplefs_inode_t* new_inode = &fs_data->inode_table[new_inode_num];
-    new_inode->mode = SIMPLEFS_S_IFREG | SIMPLEFS_S_IRUSR | SIMPLEFS_S_IWUSR | SIMPLEFS_S_IRGRP | SIMPLEFS_S_IROTH; // 0644
+    uint16_t mode_bits = SIMPLEFS_S_IRUSR | SIMPLEFS_S_IRGRP | SIMPLEFS_S_IROTH; // read for all
+    if ((flags & O_WRONLY) || (flags & O_RDWR) || (flags & O_APPEND) || (flags & O_TRUNC)) {
+        mode_bits |= SIMPLEFS_S_IWUSR;
+    }
+    if (flags & O_RDWR) {
+        mode_bits |= SIMPLEFS_S_IWGRP | SIMPLEFS_S_IWOTH;
+    }
+    new_inode->mode = SIMPLEFS_S_IFREG | mode_bits;
     
     // Set ownership from current process (v0.7.3)
     process_t* proc = process_get_current();
@@ -1391,6 +1430,38 @@ static int simplefs_vnode_stat(vnode_t* node, stat_t* stat) {
     return VFS_OK;
 }
 
+static int simplefs_lookup_inode_path(const char* path,
+                                      vnode_t** vnode_out,
+                                      simplefs_data_t** fs_data_out,
+                                      uint32_t* inode_num_out,
+                                      simplefs_inode_t** inode_out) {
+    if (!path) {
+        return -1;
+    }
+
+    vnode_t* vnode = vfs_resolve_path(path);
+    if (!vnode || !vnode->fs || !vnode->fs->fs_data) {
+        return -1;
+    }
+
+    if (!vnode->fs->name || strcmp(vnode->fs->name, "simplefs") != 0) {
+        return -1;
+    }
+
+    simplefs_data_t* fs_data = (simplefs_data_t*)vnode->fs->fs_data;
+    uint32_t inode_num = (uint32_t)vnode->fs_data;
+    if (inode_num >= fs_data->superblock.total_inodes) {
+        return -1;
+    }
+
+    if (vnode_out) *vnode_out = vnode;
+    if (fs_data_out) *fs_data_out = fs_data;
+    if (inode_num_out) *inode_num_out = inode_num;
+    if (inode_out) *inode_out = &fs_data->inode_table[inode_num];
+
+    return 0;
+}
+
 // Public API
 
 void simplefs_init(void) {
@@ -1582,63 +1653,178 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
 // Extended filesystem operations
 
 int simplefs_symlink(const char* target, const char* linkpath) {
-    // TODO: Implement symbolic link creation
-    // This would create a new inode with mode SIMPLEFS_S_IFLNK
-    // and store the target path in the file data
-    (void)target;
-    (void)linkpath;
-    // serial_puts("SimpleFS: symlink not yet implemented\n");
-    return -1;
+    if (!target || !linkpath || !*target || !*linkpath) {
+        return -1;
+    }
+
+    if (vfs_resolve_path(linkpath)) {
+        return -1;
+    }
+
+    int fd = vfs_open(linkpath, O_CREAT | O_TRUNC | O_RDWR);
+    if (fd < 0) {
+        return -1;
+    }
+
+    uint32_t target_len = strlen(target);
+    int written = (target_len > 0) ? vfs_write(fd, target, target_len) : 0;
+    vfs_close(fd);
+
+    if (written != (int)target_len) {
+        vfs_unlink(linkpath);
+        return -1;
+    }
+
+    simplefs_data_t* fs_data = NULL;
+    uint32_t inode_num = 0;
+    simplefs_inode_t* inode = NULL;
+    if (simplefs_lookup_inode_path(linkpath, NULL, &fs_data, &inode_num, &inode) != 0) {
+        vfs_unlink(linkpath);
+        return -1;
+    }
+
+    inode->mode = SIMPLEFS_S_IFLNK | SIMPLEFS_S_IRWXU | SIMPLEFS_S_IRWXG | SIMPLEFS_S_IRWXO;
+    inode->mtime = get_current_time();
+    inode->ctime = get_current_time();
+    write_inode(fs_data, inode_num);
+
+    return 0;
 }
 
 int simplefs_readlink(const char* path, char* buf, uint32_t bufsize) {
-    // TODO: Implement symbolic link reading
-    // This would read the target path from a symlink inode
-    (void)path;
-    (void)buf;
-    (void)bufsize;
-    // serial_puts("SimpleFS: readlink not yet implemented\n");
-    return -1;
+    if (!path || !buf || bufsize == 0) {
+        return -1;
+    }
+
+    vnode_t* vnode = NULL;
+    simplefs_inode_t* inode = NULL;
+    if (simplefs_lookup_inode_path(path, &vnode, NULL, NULL, &inode) != 0) {
+        return -1;
+    }
+
+    if (!SIMPLEFS_ISLNK(inode->mode)) {
+        return -1;
+    }
+
+    uint32_t to_read = inode->size;
+    if (to_read >= bufsize) {
+        to_read = bufsize - 1;
+    }
+
+    int read = simplefs_vnode_read(vnode, buf, to_read, 0);
+    if (read < 0) {
+        return -1;
+    }
+
+    buf[read] = '\0';
+    return read;
 }
 
 int simplefs_chmod(const char* path, uint16_t mode) {
-    // TODO: Implement permission changes
-    // This would update the mode field of an inode
-    (void)path;
-    (void)mode;
-    // serial_puts("SimpleFS: chmod not yet implemented\n");
-    return -1;
+    simplefs_data_t* fs_data = NULL;
+    uint32_t inode_num = 0;
+    simplefs_inode_t* inode = NULL;
+    if (simplefs_lookup_inode_path(path, NULL, &fs_data, &inode_num, &inode) != 0) {
+        return -1;
+    }
+
+    inode->mode = (inode->mode & SIMPLEFS_S_IFMT) | (mode & ~SIMPLEFS_S_IFMT);
+    inode->ctime = get_current_time();
+    return write_inode(fs_data, inode_num);
 }
 
 int simplefs_chown(const char* path, uint16_t uid, uint16_t gid) {
-    // TODO: Implement ownership changes
-    // This would update the uid/gid fields of an inode
-    (void)path;
-    (void)uid;
-    (void)gid;
-    // serial_puts("SimpleFS: chown not yet implemented\n");
-    return -1;
+    simplefs_data_t* fs_data = NULL;
+    uint32_t inode_num = 0;
+    simplefs_inode_t* inode = NULL;
+    if (simplefs_lookup_inode_path(path, NULL, &fs_data, &inode_num, &inode) != 0) {
+        return -1;
+    }
+
+    inode->uid = uid;
+    inode->gid = gid;
+    inode->owner_type = (uid == 0) ? (uint8_t)OWNER_ROOT : (uint8_t)OWNER_USR;
+    inode->ctime = get_current_time();
+    return write_inode(fs_data, inode_num);
 }
 
 int simplefs_setxattr(const char* path, const char* name, const void* value, uint32_t size) {
-    // TODO: Implement extended attributes
-    // This would store attributes in the file_acl block
-    (void)path;
-    (void)name;
-    (void)value;
-    (void)size;
-    // serial_puts("SimpleFS: setxattr not yet implemented\n");
-    return -1;
+    if (!path || !name || (!value && size > 0)) {
+        return -1;
+    }
+
+    uint32_t name_len = strlen(name);
+    if (name_len == 0 || name_len >= 32 || size > 64) {
+        return -1;
+    }
+
+    simplefs_data_t* fs_data = NULL;
+    uint32_t inode_num = 0;
+    simplefs_inode_t* inode = NULL;
+    if (simplefs_lookup_inode_path(path, NULL, &fs_data, &inode_num, &inode) != 0) {
+        return -1;
+    }
+
+    if (inode->file_acl == 0) {
+        inode->file_acl = alloc_block(fs_data);
+        if (inode->file_acl == 0) {
+            return -1;
+        }
+    }
+
+    uint8_t block[SIMPLEFS_BLOCK_SIZE];
+    memset(block, 0, sizeof(block));
+    simplefs_xattr_t* attr = (simplefs_xattr_t*)block;
+    attr->name_len = (uint8_t)name_len;
+    attr->value_len = (uint8_t)size;
+    memcpy(attr->name, name, name_len);
+    if (size > 0) {
+        memcpy(attr->value, value, size);
+    }
+
+    if (write_block(fs_data, inode->file_acl, block) != 0) {
+        return -1;
+    }
+
+    inode->ctime = get_current_time();
+    return write_inode(fs_data, inode_num);
 }
 
 int simplefs_getxattr(const char* path, const char* name, void* value, uint32_t size) {
-    // TODO: Implement extended attribute retrieval
-    (void)path;
-    (void)name;
-    (void)value;
-    (void)size;
-    // serial_puts("SimpleFS: getxattr not yet implemented\n");
-    return -1;
+    if (!path || !name) {
+        return -1;
+    }
+
+    simplefs_inode_t* inode = NULL;
+    simplefs_data_t* fs_data = NULL;
+    if (simplefs_lookup_inode_path(path, NULL, &fs_data, NULL, &inode) != 0) {
+        return -1;
+    }
+
+    if (inode->file_acl == 0) {
+        return -1;
+    }
+
+    uint8_t block[SIMPLEFS_BLOCK_SIZE];
+    if (read_block(fs_data, inode->file_acl, block) != 0) {
+        return -1;
+    }
+
+    simplefs_xattr_t* attr = (simplefs_xattr_t*)block;
+    uint32_t name_len = strlen(name);
+    if (attr->name_len != name_len || strncmp(attr->name, name, name_len) != 0) {
+        return -1;
+    }
+
+    if (!value) {
+        return attr->value_len;
+    }
+    if (size < attr->value_len) {
+        return -1;
+    }
+
+    memcpy(value, attr->value, attr->value_len);
+    return attr->value_len;
 }
 
 // Journaling operations

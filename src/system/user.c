@@ -16,6 +16,8 @@
 #include <fs/vfs.h>
 #include <process.h>
 #include <fileperm.h>
+#include <time_subsystem.h>
+#include <arch.h>
 
 // User database (static allocation for early boot)
 static user_t user_database[MAX_USERS];
@@ -23,6 +25,50 @@ static uint32_t user_count = 0;
 
 // Current session
 static session_t current_session;
+
+static int is_leap_year(uint32_t year) {
+    if ((year % 4) != 0) return 0;
+    if ((year % 100) != 0) return 1;
+    return (year % 400) == 0;
+}
+
+static uint32_t days_before_month(uint32_t year, uint32_t month) {
+    static const uint8_t month_days[12] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+
+    uint32_t days = 0;
+    for (uint32_t m = 1; m < month && m <= 12; m++) {
+        days += month_days[m - 1];
+        if (m == 2 && is_leap_year(year)) {
+            days++;
+        }
+    }
+    return days;
+}
+
+static uint32_t user_timestamp_now(void) {
+    aos_datetime_t now;
+    if (time_get_datetime(&now) == 0 && now.year >= 1970) {
+        uint32_t days = 0;
+        for (uint32_t y = 1970; y < now.year; y++) {
+            days += is_leap_year(y) ? 366U : 365U;
+        }
+        days += days_before_month(now.year, now.month);
+        if (now.day > 0) {
+            days += (uint32_t)(now.day - 1);
+        }
+
+        return days * 86400U +
+               (uint32_t)now.hour * 3600U +
+               (uint32_t)now.minute * 60U +
+               (uint32_t)now.second;
+    }
+
+    uint32_t hz = arch_timer_get_frequency();
+    if (hz == 0) hz = 100;
+    return arch_timer_get_ticks() / hz;
+}
 
 // Helper function: hash password
 static void hash_password(const char* password, char* hash_out) {
@@ -293,7 +339,7 @@ int user_login(user_t* user) {
     }
     
     current_session.user = user;
-    current_session.login_time = 0; // TODO: Use RTC when available
+    current_session.login_time = user_timestamp_now();
     current_session.session_flags = SESSION_FLAG_LOGGED_IN;
     
     if (user->uid == UID_ROOT) {

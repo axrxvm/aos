@@ -156,6 +156,7 @@ char* vfs_normalize_path(const char* path);
 // File operations
 int vfs_open(const char* path, uint32_t flags);
 int vfs_close(int fd);
+int vfs_dup(int fd);
 int vfs_read(int fd, void* buffer, uint32_t size);
 int vfs_write(int fd, const void* buffer, uint32_t size);
 int vfs_lseek(int fd, int offset, int whence);

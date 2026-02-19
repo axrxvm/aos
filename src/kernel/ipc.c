@@ -20,50 +20,180 @@ static channel_t* channel_list = NULL;
 static shared_region_t* region_list = NULL;
 static int next_channel_id = 1;
 
+typedef struct ipc_msg_state {
+    pid_t pid;
+    msg_queue_t queue;
+    struct ipc_msg_state* next;
+} ipc_msg_state_t;
+
+static ipc_msg_state_t* msg_state_list = NULL;
+
+static ipc_msg_state_t* find_msg_state(pid_t pid) {
+    ipc_msg_state_t* current = msg_state_list;
+    while (current) {
+        if (current->pid == pid) {
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+static ipc_msg_state_t* get_msg_state(pid_t pid, int create) {
+    ipc_msg_state_t* state = find_msg_state(pid);
+    if (state || !create) {
+        return state;
+    }
+
+    state = (ipc_msg_state_t*)kmalloc(sizeof(ipc_msg_state_t));
+    if (!state) {
+        return NULL;
+    }
+
+    memset(state, 0, sizeof(ipc_msg_state_t));
+    state->pid = pid;
+    state->next = msg_state_list;
+    msg_state_list = state;
+    return state;
+}
+
+static int msg_queue_push(msg_queue_t* queue, const message_t* msg) {
+    if (!queue || !msg || queue->count >= MAX_MESSAGES) {
+        return -1;
+    }
+
+    queue->messages[queue->tail] = *msg;
+    queue->tail = (queue->tail + 1) % MAX_MESSAGES;
+    queue->count++;
+    return 0;
+}
+
+static int msg_queue_pop(msg_queue_t* queue, message_t* msg) {
+    if (!queue || !msg || queue->count <= 0) {
+        return -1;
+    }
+
+    *msg = queue->messages[queue->head];
+    queue->head = (queue->head + 1) % MAX_MESSAGES;
+    queue->count--;
+    return 0;
+}
+
 // Initialize IPC subsystem
 void init_ipc(void) {
     serial_puts("Initializing IPC subsystem...\n");
     channel_list = NULL;
     region_list = NULL;
     next_channel_id = 1;
+
+    while (msg_state_list) {
+        ipc_msg_state_t* next = msg_state_list->next;
+        kfree(msg_state_list);
+        msg_state_list = next;
+    }
+
     serial_puts("IPC subsystem initialized.\n");
 }
 
 // ===== Message Events Implementation =====
 
 int msg_send(pid_t target_pid, int msg_num, uint32_t data) {
-    (void)data;  // Reserved for future use
-    
     process_t* target = process_get_by_pid(target_pid);
     if (!target) {
         return -1;  // Process not found
     }
-    
-    // For now, just handle basic messages
-    if (msg_num == MSG_TERMINATE) {
-        process_kill(target_pid, 15);  // SIGTERM equivalent
-    } else if (msg_num == MSG_INTERRUPT) {
-        // Could interrupt I/O operations
+
+    ipc_msg_state_t* state = get_msg_state(target_pid, 1);
+    if (!state) {
+        return -1;
     }
-    
+
+    message_t msg;
+    msg.msg_num = msg_num;
+    msg.sender_pid = process_getpid();
+    msg.data = data;
+
+    if (msg_queue_push(&state->queue, &msg) != 0) {
+        return -1;
+    }
+
+    // Preserve legacy immediate terminate behavior.
+    if (msg_num == MSG_TERMINATE) {
+        process_kill(target_pid, 15);
+    }
+
+    if (target->schedulable && target->state == PROCESS_BLOCKED) {
+        process_mark_task_state(target_pid, PROCESS_READY);
+    }
+
     return 0;
 }
 
 int msg_receive(message_t* msg) {
-    (void)msg;
-    // TODO: Implement message queue per process
-    return -1;  // No messages
+    if (!msg) {
+        return -1;
+    }
+
+    pid_t current_pid = process_getpid();
+    if (current_pid <= 0) {
+        return -1;
+    }
+
+    ipc_msg_state_t* state = get_msg_state(current_pid, 0);
+    if (!state) {
+        return -1;
+    }
+
+    return msg_queue_pop(&state->queue, msg);
 }
 
 int msg_set_handler(int msg_num, msg_handler_t handler) {
-    (void)msg_num;
-    (void)handler;
-    // TODO: Store handler in process structure
+    if (msg_num < 0 || msg_num >= 32) {
+        return -1;
+    }
+
+    pid_t current_pid = process_getpid();
+    if (current_pid <= 0) {
+        return -1;
+    }
+
+    ipc_msg_state_t* state = get_msg_state(current_pid, 1);
+    if (!state) {
+        return -1;
+    }
+
+    state->queue.handlers[msg_num] = handler;
     return 0;
 }
 
 void msg_dispatch_pending(void) {
-    // TODO: Check and dispatch pending messages
+    pid_t current_pid = process_getpid();
+    if (current_pid <= 0) {
+        return;
+    }
+
+    ipc_msg_state_t* state = get_msg_state(current_pid, 0);
+    if (!state) {
+        return;
+    }
+
+    message_t msg;
+    while (msg_queue_pop(&state->queue, &msg) == 0) {
+        msg_handler_t handler = NULL;
+        if (msg.msg_num >= 0 && msg.msg_num < 32) {
+            handler = state->queue.handlers[msg.msg_num];
+        }
+
+        if (handler) {
+            handler(msg.msg_num);
+            continue;
+        }
+
+        // Default handling for built-in message types.
+        if (msg.msg_num == MSG_TERMINATE) {
+            process_kill(current_pid, 15);
+        }
+    }
 }
 
 // ===== Communication Channels Implementation =====

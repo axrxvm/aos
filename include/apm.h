@@ -14,7 +14,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#define APM_REPO_BASE_URL "http://repo.aosproject.workers.dev/main" // http cuz https not working as of now.
+#define APM_REPO_BASE_URL "https://repo.aosproject.workers.dev/main"
 #define APM_LIST_FILE "/sys/apm/kmodule.list.source"
 #define APM_MODULE_DIR "/sys/apm/modules"
 #define APM_AUTOLOAD_FILE "/sys/apm/kmodule.autoload"
