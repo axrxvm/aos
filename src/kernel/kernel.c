@@ -527,7 +527,7 @@ mount_done:
     register_component_task("subsystem.userspace", TASK_TYPE_SUBSYSTEM, PRIORITY_NORMAL);
     userspace_init();
     
-    // Launch userspace shell in the bootstrap execution context.
+    // Launch userspace shell (TODO: should be a separate process)
     userspace_run();
     
     // Should never reach here

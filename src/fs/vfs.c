@@ -604,42 +604,18 @@ int vfs_close(int fd) {
     }
     
     file_t* file = fd_table[fd];
-    fd_table[fd] = NULL;
-
-    if (file->refcount > 1) {
-        file->refcount--;
-        return VFS_OK;
-    }
-
     vnode_t* vnode = file->vnode;
-
-    // Call vnode close operation only when the last descriptor is closed.
+    
+    // Call vnode close operation
     if (vnode->ops && vnode->ops->close) {
         vnode->ops->close(vnode);
     }
-
+    
     vfs_vnode_release(vnode);
-    fd_table[fd] = NULL;
     kfree(file);
+    fd_table[fd] = NULL;
     
     return VFS_OK;
-}
-
-int vfs_dup(int fd) {
-    if (fd < 0 || fd >= MAX_FDS || !fd_table[fd]) {
-        return VFS_ERR_INVALID;
-    }
-
-    int new_fd = alloc_fd();
-    if (new_fd < 0) {
-        return VFS_ERR_NOSPACE;
-    }
-
-    file_t* file = fd_table[fd];
-    file->refcount++;
-    fd_table[new_fd] = file;
-
-    return new_fd;
 }
 
 int vfs_read(int fd, void* buffer, uint32_t size) {

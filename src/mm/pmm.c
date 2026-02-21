@@ -15,7 +15,6 @@
 #include <pmm.h>
 #include <stdlib.h> // For itoa
 #include <string.h>
-#include <multiboot.h>
 
 // Memory zone boundaries (in frame numbers)
 #define DMA_ZONE_END        (16 * 1024 * 1024 / PAGE_SIZE)      // 16MB
@@ -231,46 +230,8 @@ void init_pmm_advanced(uint32_t mem_size, void *mmap_addr, uint32_t mmap_length)
     init_pmm(mem_size);
     
     // Then process memory map if provided
-    if (!mmap_addr || mmap_length < sizeof(multiboot_memory_map_t)) {
-        serial_puts("PMM: No multiboot memory map provided, using basic init only\n");
-        serial_puts("PMM: Advanced initialization complete\n");
-        return;
-    }
-
-    region_list = NULL;
-    region_pool_index = 0;
-
-    uint8_t* cursor = (uint8_t*)mmap_addr;
-    uint8_t* end = cursor + mmap_length;
-    uint64_t max_tracked_addr = (uint64_t)total_frames * PAGE_SIZE;
-
-    while (cursor + sizeof(multiboot_memory_map_t) <= end) {
-        multiboot_memory_map_t* entry = (multiboot_memory_map_t*)cursor;
-        uint32_t entry_len = entry->size + sizeof(entry->size);
-        if (entry_len == 0 || cursor + entry_len > end) {
-            break;
-        }
-
-        uint64_t region_start64 = entry->addr;
-        uint64_t region_end64 = entry->addr + entry->len;
-        if (region_end64 > max_tracked_addr) {
-            region_end64 = max_tracked_addr;
-        }
-
-        if (region_end64 > region_start64) {
-            uint32_t region_start = (uint32_t)region_start64;
-            uint32_t region_end = (uint32_t)region_end64;
-            pmm_add_region(region_start, region_end, entry->type);
-
-            // Type 1 is available RAM in multiboot memory maps.
-            if (entry->type != 1) {
-                pmm_reserve_region(region_start, region_end);
-            }
-        }
-
-        cursor += entry_len;
-    }
-
+    // This would parse multiboot memory map to mark unusable regions
+    // TODO: Implement multiboot memory map parsing
     serial_puts("PMM: Advanced initialization complete\n");
 }
 
@@ -660,3 +621,4 @@ void pmm_dump_allocations(void) {
     serial_puts(" used frames\n");
     serial_puts("===========================\n\n");
 }
+

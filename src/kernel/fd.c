@@ -56,11 +56,8 @@ int fd_dup(int oldfd) {
     // Find first available FD
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
         if (proc->file_descriptors[i] == -1) {
-            int new_vfs_fd = vfs_dup(proc->file_descriptors[oldfd]);
-            if (new_vfs_fd < 0) {
-                return -1;
-            }
-            proc->file_descriptors[i] = new_vfs_fd;
+            proc->file_descriptors[i] = proc->file_descriptors[oldfd];
+            // TODO: Increment reference count in VFS
             return i;
         }
     }
@@ -91,11 +88,8 @@ int fd_dup2(int oldfd, int newfd) {
         vfs_close(proc->file_descriptors[newfd]);
     }
     
-    int new_vfs_fd = vfs_dup(proc->file_descriptors[oldfd]);
-    if (new_vfs_fd < 0) {
-        return -1;
-    }
-    proc->file_descriptors[newfd] = new_vfs_fd;
+    proc->file_descriptors[newfd] = proc->file_descriptors[oldfd];
+    // TODO: Increment reference count in VFS
     
     return newfd;
 }

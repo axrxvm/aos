@@ -36,8 +36,8 @@ static int ping_received = 0;
 static uint16_t ping_sequence = 0;
 static uint32_t ping_dest_ip = 0;
 static volatile int ping_reply_received = 0;  // Flag for current ping reply
-#define REPO_BASE_URL "https://repo.aosproject.workers.dev/main/"
-#define TEMPDB_BASE_URL "https://tempdb.aosproject.workers.dev/"
+#define REPO_BASE_URL "http://repo.aosproject.workers.dev/main/"
+#define TEMPDB_BASE_URL "http://tempdb.aosproject.workers.dev/"
 
 // Ping callback
 static void ping_reply_handler(uint32_t src_ip, uint16_t sequence, uint32_t rtt_ms) {
@@ -620,43 +620,6 @@ void cmd_aurl(const char* args) {
     http_response_free(response);
 }
 
-// HTTPS mode command
-void cmd_httpmode(const char* args) {
-    while (args && *args == ' ') args++;
-    
-    if (!args || *args == '\0') {
-        http_https_mode_t mode = http_get_https_mode();
-        vga_puts("HTTPS mode: ");
-        if (mode == HTTP_HTTPS_MODE_STRICT) {
-            vga_puts("strict (fail if TLS fails)\n");
-        } else {
-            vga_puts("compat (fallback to insecure HTTP/80)\n");
-        }
-        return;
-    }
-    
-    char mode[16];
-    int i = 0;
-    while (*args && *args != ' ' && i < (int)sizeof(mode) - 1) {
-        mode[i++] = *args++;
-    }
-    mode[i] = '\0';
-    
-    if (strcmp(mode, "strict") == 0) {
-        http_set_https_mode(HTTP_HTTPS_MODE_STRICT);
-        vga_puts("HTTPS mode set to strict\n");
-        return;
-    }
-    
-    if (strcmp(mode, "compat") == 0) {
-        http_set_https_mode(HTTP_HTTPS_MODE_COMPAT);
-        vga_puts("HTTPS mode set to compat (insecure fallback enabled)\n");
-        return;
-    }
-    
-    vga_puts("Usage: httpmode [strict|compat]\n");
-}
-
 // FTP session state
 static ftp_session_t* ftp_current_session = NULL;
 
@@ -1160,7 +1123,7 @@ void cmd_module_network_register(void) {
     command_register_with_category(
         "wget",
         "wget <url|@repo/path|@tempdb/path> [output_file]",
-        "Download file via HTTP/HTTPS",
+        "Download file via HTTP",
         "Network",
         cmd_wget
     );
@@ -1168,17 +1131,9 @@ void cmd_module_network_register(void) {
     command_register_with_category(
         "aurl",
         "aurl [-v] <url>",
-        "Advanced HTTP/HTTPS client",
+        "Advanced HTTP client",
         "Network",
         cmd_aurl
-    );
-    
-    command_register_with_category(
-        "httpmode",
-        "httpmode [strict|compat]",
-        "Set HTTPS policy (strict or compat fallback)",
-        "Network",
-        cmd_httpmode
     );
     
     command_register_with_category(

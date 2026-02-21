@@ -28,23 +28,12 @@
 #define TCP_CONNECT_TIMEOUT_MS 10000
 #define TCP_RETRANSMIT_TIMEOUT_MS 1000
 #define TCP_MAX_RETRANSMITS 5
-#define TCP_ACCEPT_QUEUE_SIZE 8
 
 // TCP socket table
 static tcp_socket_t tcp_sockets[MAX_TCP_SOCKETS];
 
 // Ephemeral port counter
 static uint16_t next_ephemeral_port = 49152;
-
-typedef struct {
-    tcp_socket_t* sockets[TCP_ACCEPT_QUEUE_SIZE];
-    uint8_t head;
-    uint8_t tail;
-    uint8_t count;
-} tcp_accept_queue_t;
-
-static tcp_accept_queue_t tcp_accept_queues[MAX_TCP_SOCKETS];
-static int8_t tcp_parent_socket[MAX_TCP_SOCKETS];
 
 
 // TCP Pseudo-header for Checksum
@@ -102,8 +91,6 @@ void tcp_init(void) {
     serial_puts("Initializing TCP...\n");
     
     memset(tcp_sockets, 0, sizeof(tcp_sockets));
-    memset(tcp_accept_queues, 0, sizeof(tcp_accept_queues));
-    memset(tcp_parent_socket, -1, sizeof(tcp_parent_socket));
     
     for (int i = 0; i < MAX_TCP_SOCKETS; i++) {
         tcp_sockets[i].state = TCP_CLOSED;
@@ -145,128 +132,6 @@ static tcp_socket_t* tcp_find_socket(uint16_t local_port, uint32_t remote_ip,
     }
     
     return NULL;
-}
-
-static int tcp_socket_index(tcp_socket_t* sock) {
-    if (!sock) {
-        return -1;
-    }
-
-    if (sock < &tcp_sockets[0] || sock >= &tcp_sockets[MAX_TCP_SOCKETS]) {
-        return -1;
-    }
-
-    return (int)(sock - &tcp_sockets[0]);
-}
-
-static void tcp_accept_queue_reset(int listener_idx) {
-    if (listener_idx < 0 || listener_idx >= MAX_TCP_SOCKETS) {
-        return;
-    }
-
-    memset(&tcp_accept_queues[listener_idx], 0, sizeof(tcp_accept_queue_t));
-}
-
-static int tcp_accept_queue_push(int listener_idx, tcp_socket_t* socket) {
-    if (!socket || listener_idx < 0 || listener_idx >= MAX_TCP_SOCKETS) {
-        return -1;
-    }
-
-    tcp_accept_queue_t* queue = &tcp_accept_queues[listener_idx];
-    if (queue->count >= TCP_ACCEPT_QUEUE_SIZE) {
-        return -1;
-    }
-
-    queue->sockets[queue->tail] = socket;
-    queue->tail = (uint8_t)((queue->tail + 1) % TCP_ACCEPT_QUEUE_SIZE);
-    queue->count++;
-    return 0;
-}
-
-static tcp_socket_t* tcp_accept_queue_pop(int listener_idx) {
-    if (listener_idx < 0 || listener_idx >= MAX_TCP_SOCKETS) {
-        return NULL;
-    }
-
-    tcp_accept_queue_t* queue = &tcp_accept_queues[listener_idx];
-    if (queue->count == 0) {
-        return NULL;
-    }
-
-    tcp_socket_t* socket = queue->sockets[queue->head];
-    queue->sockets[queue->head] = NULL;
-    queue->head = (uint8_t)((queue->head + 1) % TCP_ACCEPT_QUEUE_SIZE);
-    queue->count--;
-    return socket;
-}
-
-static void tcp_accept_queue_remove_socket(tcp_socket_t* socket) {
-    if (!socket) {
-        return;
-    }
-
-    for (int i = 0; i < MAX_TCP_SOCKETS; i++) {
-        tcp_accept_queue_t* queue = &tcp_accept_queues[i];
-        if (queue->count == 0) {
-            continue;
-        }
-
-        tcp_socket_t* retained[TCP_ACCEPT_QUEUE_SIZE];
-        uint8_t retained_count = 0;
-
-        while (queue->count > 0) {
-            tcp_socket_t* queued = tcp_accept_queue_pop(i);
-            if (queued && queued != socket && retained_count < TCP_ACCEPT_QUEUE_SIZE) {
-                retained[retained_count++] = queued;
-            }
-        }
-
-        tcp_accept_queue_reset(i);
-        for (uint8_t j = 0; j < retained_count; j++) {
-            tcp_accept_queue_push(i, retained[j]);
-        }
-    }
-}
-
-static int tcp_send_reset(net_interface_t* iface,
-                          uint32_t local_ip,
-                          uint16_t local_port,
-                          uint32_t remote_ip,
-                          uint16_t remote_port,
-                          uint32_t seq_num,
-                          uint32_t ack_num,
-                          uint8_t flags,
-                          uint32_t payload_len) {
-    if (!iface) {
-        return -1;
-    }
-
-    uint8_t packet[TCP_HEADER_LEN];
-    memset(packet, 0, sizeof(packet));
-
-    tcp_header_t* tcp_hdr = (tcp_header_t*)packet;
-    tcp_hdr->src_port = htons(local_port);
-    tcp_hdr->dest_port = htons(remote_port);
-    tcp_hdr->window_size = 0;
-    tcp_hdr->data_offset_flags = (5 << 4);
-
-    if (flags & TCP_FLAG_ACK) {
-        tcp_hdr->seq_num = htonl(ack_num);
-        tcp_hdr->ack_num = 0;
-        tcp_hdr->flags = TCP_FLAG_RST;
-    } else {
-        uint32_t ack_response = seq_num + payload_len;
-        if (flags & TCP_FLAG_SYN) ack_response++;
-        if (flags & TCP_FLAG_FIN) ack_response++;
-
-        tcp_hdr->seq_num = 0;
-        tcp_hdr->ack_num = htonl(ack_response);
-        tcp_hdr->flags = TCP_FLAG_RST | TCP_FLAG_ACK;
-    }
-
-    tcp_hdr->checksum = 0;
-    tcp_hdr->checksum = tcp_checksum(local_ip, remote_ip, packet, sizeof(packet));
-    return ipv4_send(iface, remote_ip, IP_PROTO_TCP, packet, sizeof(packet));
 }
 
 
@@ -471,15 +336,7 @@ int tcp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
         serial_puts("TCP: No matching socket found!\n");
         // No socket, send RST if not RST
         if (!(flags & TCP_FLAG_RST)) {
-            tcp_send_reset(iface,
-                           dest_ip,
-                           dest_port,
-                           src_ip,
-                           src_port,
-                           seq_num,
-                           ack_num,
-                           flags,
-                           payload_len);
+            // TODO: Send RST packet
         }
         return -1;
     }
@@ -499,42 +356,13 @@ int tcp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
     switch (sock->state) {
         case TCP_LISTEN:
             if (flags & TCP_FLAG_SYN) {
-                int listener_idx = tcp_socket_index(sock);
-                tcp_socket_t* child = tcp_socket_create();
-                if (!child) {
-                    tcp_send_reset(iface,
-                                   dest_ip,
-                                   dest_port,
-                                   src_ip,
-                                   src_port,
-                                   seq_num,
-                                   ack_num,
-                                   flags,
-                                   payload_len);
-                    break;
-                }
-
-                child->local_ip = sock->local_ip;
-                child->local_port = sock->local_port;
-                child->bound = 1;
-                child->window_size = sock->window_size;
-                child->remote_ip = src_ip;
-                child->remote_port = src_port;
-                child->ack_num = seq_num + 1;
-                child->state = TCP_SYN_RECEIVED;
-
-                int child_idx = tcp_socket_index(child);
-                if (listener_idx >= 0 && child_idx >= 0) {
-                    tcp_parent_socket[child_idx] = (int8_t)listener_idx;
-                }
-
-                if (tcp_send(child, NULL, 0, TCP_FLAG_SYN | TCP_FLAG_ACK) != 0) {
-                    child->state = TCP_CLOSED;
-                    child->bound = 0;
-                    if (child_idx >= 0) {
-                        tcp_parent_socket[child_idx] = -1;
-                    }
-                }
+                sock->remote_ip = src_ip;
+                sock->remote_port = src_port;
+                sock->ack_num = seq_num + 1;
+                sock->state = TCP_SYN_RECEIVED;
+                
+                // Send SYN-ACK
+                tcp_send(sock, NULL, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
             }
             break;
             
@@ -561,17 +389,6 @@ int tcp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
             if (flags & TCP_FLAG_ACK) {
                 if (ack_num == sock->seq_num) {
                     sock->state = TCP_ESTABLISHED;
-
-                    int child_idx = tcp_socket_index(sock);
-                    if (child_idx >= 0 && tcp_parent_socket[child_idx] >= 0) {
-                        int listener_idx = tcp_parent_socket[child_idx];
-                        if (tcp_accept_queue_push(listener_idx, sock) != 0) {
-                            tcp_send(sock, NULL, 0, TCP_FLAG_RST | TCP_FLAG_ACK);
-                            sock->state = TCP_CLOSED;
-                            sock->bound = 0;
-                        }
-                        tcp_parent_socket[child_idx] = -1;
-                    }
                 }
             }
             break;
@@ -685,8 +502,6 @@ tcp_socket_t* tcp_socket_create(void) {
             sock->seq_num = get_tick_count();  // Random-ish initial sequence
             sock->rx_buffer = NULL;
             sock->rx_size = 0;
-            tcp_parent_socket[i] = -1;
-            tcp_accept_queue_reset(i);
             return sock;
         }
     }
@@ -728,10 +543,6 @@ int tcp_socket_listen(tcp_socket_t* sock, int backlog) {
     }
     
     sock->state = TCP_LISTEN;
-    int idx = tcp_socket_index(sock);
-    if (idx >= 0) {
-        tcp_accept_queue_reset(idx);
-    }
     return 0;
 }
 
@@ -739,13 +550,9 @@ tcp_socket_t* tcp_socket_accept(tcp_socket_t* sock) {
     if (!sock || sock->state != TCP_LISTEN) {
         return NULL;
     }
-
-    int listener_idx = tcp_socket_index(sock);
-    if (listener_idx < 0) {
-        return NULL;
-    }
-
-    return tcp_accept_queue_pop(listener_idx);
+    
+    // TODO: Implement proper accept queue
+    return NULL;
 }
 
 int tcp_socket_connect(tcp_socket_t* sock, uint32_t ip, uint16_t port) {
@@ -976,39 +783,6 @@ void tcp_socket_close(tcp_socket_t* sock) {
     if (!sock) {
         return;
     }
-
-    int socket_idx = tcp_socket_index(sock);
-
-    if (sock->state == TCP_LISTEN && socket_idx >= 0) {
-        tcp_socket_t* queued = NULL;
-        while ((queued = tcp_accept_queue_pop(socket_idx)) != NULL) {
-            int child_idx = tcp_socket_index(queued);
-            if (child_idx >= 0) {
-                tcp_parent_socket[child_idx] = -1;
-            }
-
-            if (queued->rx_buffer) {
-                kfree(queued->rx_buffer);
-                queued->rx_buffer = NULL;
-            }
-            queued->state = TCP_CLOSED;
-            queued->bound = 0;
-        }
-        tcp_accept_queue_reset(socket_idx);
-
-        for (int i = 0; i < MAX_TCP_SOCKETS; i++) {
-            if (tcp_parent_socket[i] == socket_idx) {
-                tcp_parent_socket[i] = -1;
-                tcp_socket_t* child = &tcp_sockets[i];
-                if (child->rx_buffer) {
-                    kfree(child->rx_buffer);
-                    child->rx_buffer = NULL;
-                }
-                child->state = TCP_CLOSED;
-                child->bound = 0;
-            }
-        }
-    }
     
     if (sock->state == TCP_ESTABLISHED || sock->state == TCP_CLOSE_WAIT) {
         sock->state = (sock->state == TCP_CLOSE_WAIT) ? TCP_LAST_ACK : TCP_FIN_WAIT_1;
@@ -1023,12 +797,6 @@ void tcp_socket_close(tcp_socket_t* sock) {
         sock->rx_buffer = NULL;
     }
     
-    tcp_accept_queue_remove_socket(sock);
-
-    if (socket_idx >= 0) {
-        tcp_parent_socket[socket_idx] = -1;
-    }
-
     sock->bound = 0;
 }
 

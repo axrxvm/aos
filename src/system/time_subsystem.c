@@ -20,7 +20,7 @@
 #include <serial.h>
 #include <vmm.h>
 
-#define TIME_API_BASE_URL "https://api.aosproject.workers.dev/time"
+#define TIME_API_BASE_URL "http://api.aosproject.workers.dev/time"
 #define CMOS_ADDRESS_PORT 0x70
 #define CMOS_DATA_PORT 0x71
 #define CMOS_NMI_DISABLE 0x80

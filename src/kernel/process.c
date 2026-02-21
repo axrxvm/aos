@@ -21,10 +21,6 @@
 #include <fileperm.h>
 #include <init.h>
 #include <kmodule.h>
-#include <fs/vfs.h>
-#include <envars.h>
-
-#define PROCESS_WAIT_WNOHANG 0x1
 
 // Process table
 static process_t process_table[MAX_PROCESSES];
@@ -53,60 +49,6 @@ static int clamp_priority(int priority) {
     if (priority < PRIORITY_IDLE) return PRIORITY_IDLE;
     if (priority > PRIORITY_REALTIME) return PRIORITY_REALTIME;
     return priority;
-}
-
-static int process_copy_user_memory(address_space_t* src, address_space_t* dst) {
-    if (!src || !dst) {
-        return -1;
-    }
-
-    uint8_t* temp_page = (uint8_t*)kmalloc(PAGE_SIZE);
-    if (!temp_page) {
-        return -1;
-    }
-
-    address_space_t* original_as = current_address_space;
-    vma_t* vma = src->vma_list;
-
-    while (vma) {
-        uint32_t start = PAGE_ALIGN_DOWN(vma->start_addr);
-        uint32_t end = PAGE_ALIGN_UP(vma->end_addr);
-
-        if ((vma->flags & VMM_USER) && start < end) {
-            size_t pages = (end - start) / PAGE_SIZE;
-
-            switch_address_space(dst);
-            if (!vmm_alloc_pages(dst, start, pages, vma->flags)) {
-                switch_address_space(original_as ? original_as : kernel_address_space);
-                kfree(temp_page);
-                return -1;
-            }
-
-            for (size_t i = 0; i < pages; i++) {
-                uint32_t vaddr = start + (uint32_t)(i * PAGE_SIZE);
-
-                switch_address_space(src);
-                if (is_page_present(src->page_dir, vaddr)) {
-                    memcpy(temp_page, (void*)vaddr, PAGE_SIZE);
-                } else {
-                    memset(temp_page, 0, PAGE_SIZE);
-                }
-
-                switch_address_space(dst);
-                memcpy((void*)vaddr, temp_page, PAGE_SIZE);
-            }
-        }
-
-        vma = vma->next;
-    }
-
-    dst->heap_start = src->heap_start;
-    dst->heap_end = src->heap_end;
-    dst->stack_top = src->stack_top;
-
-    switch_address_space(original_as ? original_as : kernel_address_space);
-    kfree(temp_page);
-    return 0;
 }
 
 const char* process_task_type_name(task_type_t type) {
@@ -687,67 +629,22 @@ int process_fork(void) {
         child->state = PROCESS_DEAD;
         return -1;
     }
-
-    if (process_copy_user_memory(current_process->address_space, child->address_space) != 0) {
-        destroy_address_space(child->address_space);
-        child->address_space = NULL;
-        child->state = PROCESS_DEAD;
-        return -1;
-    }
-
+    
+    // Copy address space (simplified - full copy)
+    // In real OS, use copy-on-write
+    // TODO: Implement proper memory copying
+    
     // Allocate kernel stack
     child->kernel_stack = (uint32_t)kmalloc(8192) + 8192;
-    if (child->kernel_stack == 8192) {
-        destroy_address_space(child->address_space);
-        child->address_space = NULL;
-        child->state = PROCESS_DEAD;
-        return -1;
-    }
     
     // Copy context (child returns 0, parent returns child PID)
     memcpy(&child->context, &current_process->context, sizeof(cpu_context_t));
     child->context.eax = 0;  // Child returns 0 from fork
     child->context.cr3 = child->address_space->page_dir->physical_addr;
-    child->user_stack = current_process->user_stack;
-    child->privilege_level = current_process->privilege_level;
-
-    // Copy security and ownership context.
-    child->sandbox = current_process->sandbox;
-    child->owner_id = current_process->owner_id;
-    child->owner_type = current_process->owner_type;
-    child->memory_used = current_process->memory_used;
-    child->files_open = 0;
-    child->children_count = 0;
-
-    for (int i = 0; i < MAX_OPEN_FILES; i++) {
-        child->file_descriptors[i] = -1;
-        if (current_process->file_descriptors[i] != -1) {
-            int dup_fd = vfs_dup(current_process->file_descriptors[i]);
-            if (dup_fd < 0) {
-                for (int j = 0; j < i; j++) {
-                    if (child->file_descriptors[j] != -1) {
-                        vfs_close(child->file_descriptors[j]);
-                        child->file_descriptors[j] = -1;
-                    }
-                }
-
-                if (child->kernel_stack > 8192) {
-                    kfree((void*)(child->kernel_stack - 8192));
-                }
-                destroy_address_space(child->address_space);
-                child->address_space = NULL;
-                child->state = PROCESS_DEAD;
-                return -1;
-            }
-            child->file_descriptors[i] = dup_fd;
-            child->files_open++;
-        }
-    }
     
     // Add to parent's children list
     child->sibling = current_process->children;
     current_process->children = child;
-    current_process->children_count++;
     
     // Add to ready queue
     enqueue_process(child);
@@ -757,10 +654,7 @@ int process_fork(void) {
 
 // Wait for child process
 int process_waitpid(int pid, int* status, int options) {
-    if ((options & ~PROCESS_WAIT_WNOHANG) != 0) {
-        return -1;
-    }
-    int nonblocking = (options & PROCESS_WAIT_WNOHANG) != 0;
+    (void)options;  // TODO: Handle options like WNOHANG
     
     if (!current_process) {
         return -1;
@@ -776,21 +670,12 @@ int process_waitpid(int pid, int* status, int options) {
         }
     } else {
         // Wait for any child
-        process_t* first_child = NULL;
         for (int i = 0; i < MAX_PROCESSES; i++) {
             if (process_table[i].parent_pid == current_process->pid &&
                 process_table[i].state != PROCESS_DEAD) {
-                if (!first_child) {
-                    first_child = &process_table[i];
-                }
-                if (process_table[i].state == PROCESS_ZOMBIE) {
-                    child = &process_table[i];
-                    break;
-                }
+                child = &process_table[i];
+                break;
             }
-        }
-        if (!child) {
-            child = first_child;
         }
         if (!child) {
             return -1;  // No children
@@ -814,10 +699,6 @@ int process_waitpid(int pid, int* status, int options) {
         child->state = PROCESS_DEAD;
         
         return child_pid;
-    }
-
-    if (nonblocking) {
-        return 0;
     }
     
     // Block until child exits
@@ -890,6 +771,8 @@ int process_kill(int pid, int signal) {
 
 // Execute new program (replaces current process)
 int process_execve(const char* path, char* const argv[], char* const envp[]) {
+    (void)envp;  // TODO: Pass environment to new program
+    
     if (!current_process || !path) {
         return -1;
     }
@@ -898,27 +781,6 @@ int process_execve(const char* path, char* const argv[], char* const envp[]) {
     int argc = 0;
     if (argv) {
         while (argv[argc]) argc++;
-    }
-
-    // Apply provided environment entries to the current process environment.
-    if (envp) {
-        for (int i = 0; envp[i]; i++) {
-            const char* entry = envp[i];
-            const char* eq = strchr(entry, '=');
-            if (!eq || eq == entry) {
-                continue;
-            }
-
-            size_t name_len = (size_t)(eq - entry);
-            if (name_len >= 63) {
-                name_len = 63;
-            }
-
-            char name_buf[64];
-            memcpy(name_buf, entry, name_len);
-            name_buf[name_len] = '\0';
-            envar_set(name_buf, eq + 1);
-        }
     }
     
     // Destroy current address space

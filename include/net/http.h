@@ -86,16 +86,8 @@ typedef struct {
     char query[256];
 } url_t;
 
-// HTTPS behavior policy
-typedef enum {
-    HTTP_HTTPS_MODE_STRICT = 0,  // Fail request if TLS handshake fails
-    HTTP_HTTPS_MODE_COMPAT = 1   // Retry over plain HTTP on port 80 (insecure)
-} http_https_mode_t;
-
 // HTTP initialization
 void http_init(void);
-void http_set_https_mode(http_https_mode_t mode);
-http_https_mode_t http_get_https_mode(void);
 
 // URL parsing
 int url_parse(const char* url_string, url_t* url);
