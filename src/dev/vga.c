@@ -57,7 +57,7 @@ static int vbe_available = 0;
 static vbe_info_block_t vbe_info;
 static vbe_mode_info_t vbe_mode_info;
 
-// Multiboot information from GRUB
+// Multiboot-compatible boot information from the active boot path (GRUB or ABL)
 static multiboot_info_t* grub_mbi = NULL;
 
 
@@ -88,7 +88,7 @@ void vga_init(void) {
 
 void vga_set_multiboot_info(multiboot_info_t* mbi) {
     grub_mbi = mbi;
-    serial_puts("VGA: Multiboot info registered\n");
+    serial_puts("VGA: Boot info registered (multiboot-compatible)\n");
     
     if (mbi && (mbi->flags & MULTIBOOT_INFO_VBE_INFO)) {
         serial_puts("VGA: Multiboot provides VBE information\n");
@@ -886,9 +886,9 @@ static int vga_bios_call(uint16_t ax, uint16_t bx, uint16_t cx, uint16_t dx) {
 }
 
 int vga_detect_vbe(void) {
-    // Use GRUB's multiboot VBE information instead of BIOS calls
+    // Use bootloader-provided multiboot-compatible VBE information.
     if (grub_mbi && (grub_mbi->flags & MULTIBOOT_INFO_VBE_INFO)) {
-        // GRUB has already queried VBE info from BIOS in real mode
+        // The bootloader has already queried VBE info from BIOS in real mode.
         multiboot_vbe_controller_info_t* ctrl_info = 
             (multiboot_vbe_controller_info_t*)(uint32_t)grub_mbi->vbe_control_info;
         
@@ -901,7 +901,7 @@ int vga_detect_vbe(void) {
             vbe_info.total_memory = ctrl_info->total_memory;
             
             char ver_str[32];
-            serial_puts("VBE detected from GRUB: version ");
+            serial_puts("VBE detected from boot info: version ");
             // Version is in BCD format (e.g., 0x0300 = 3.0)
             uint8_t major = (vbe_info.version >> 8) & 0xFF;
             uint8_t minor = vbe_info.version & 0xFF;
@@ -922,7 +922,7 @@ int vga_detect_vbe(void) {
     
     // Check if framebuffer info is available (alternative to VBE)
     if (grub_mbi && (grub_mbi->flags & MULTIBOOT_INFO_FRAMEBUFFER_INFO)) {
-        serial_puts("Framebuffer info available from GRUB (no VBE struct)\n");
+        serial_puts("Framebuffer info available from boot info (no VBE struct)\n");
         serial_puts("Using direct framebuffer access\n");
         vbe_available = 1;
         vbe_info.version = 0x0300;  // Assume VBE 3.0 compatible
@@ -930,7 +930,7 @@ int vga_detect_vbe(void) {
     }
     
     // Fallback: no multiboot VBE info available
-    serial_puts("No VBE info from GRUB, using legacy VGA only\n");
+    serial_puts("No VBE info from bootloader, using legacy VGA only\n");
     vbe_available = 0;
     return 0;
 }
@@ -952,14 +952,14 @@ int vga_get_vbe_info(vbe_info_block_t* info) {
 int vga_get_vbe_mode_info(uint16_t mode, vbe_mode_info_t* info) {
     if (!vbe_available || !info) return 0;
     
-    // First, try to get mode info from GRUB's multiboot structure
+    // First, try to get mode info from bootloader-provided multiboot-compatible data.
     if (grub_mbi && (grub_mbi->flags & MULTIBOOT_INFO_VBE_INFO)) {
         multiboot_vbe_mode_info_t* grub_mode_info = 
             (multiboot_vbe_mode_info_t*)(uint32_t)grub_mbi->vbe_mode_info;
         
         // Check if the requested mode matches the current mode set by GRUB
         if (grub_mode_info && grub_mbi->vbe_mode == mode) {
-            serial_puts("Using VBE mode info from GRUB for current mode\n");
+            serial_puts("Using VBE mode info from boot info for current mode\n");
             
             // Copy mode information from GRUB
             info->attributes = grub_mode_info->attributes;
@@ -975,7 +975,7 @@ int vga_get_vbe_mode_info(uint16_t mode, vbe_mode_info_t* info) {
     
     // Alternative: Use framebuffer info if available
     if (grub_mbi && (grub_mbi->flags & MULTIBOOT_INFO_FRAMEBUFFER_INFO)) {
-        serial_puts("Using framebuffer info from GRUB\n");
+        serial_puts("Using framebuffer info from boot info\n");
         
         info->attributes = VBE_MODE_SUPPORTED | VBE_MODE_COLOR | VBE_MODE_GRAPHICS | VBE_MODE_LINEAR_FB;
         info->width = grub_mbi->framebuffer_width;

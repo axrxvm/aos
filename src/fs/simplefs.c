@@ -89,6 +89,29 @@ static filesystem_t simplefs_filesystem = {
     .mount = NULL
 };
 
+static uint32_t simplefs_parse_source_lba(const char* source) {
+    if (!source || !*source) {
+        return 0;
+    }
+
+    const char* lba_pos = strstr(source, "lba=");
+    if (!lba_pos) {
+        lba_pos = strstr(source, "lba:");
+    }
+    if (!lba_pos) {
+        return 0;
+    }
+
+    lba_pos += 4;
+    uint32_t lba = 0;
+    while (*lba_pos >= '0' && *lba_pos <= '9') {
+        lba = (lba * 10U) + (uint32_t)(*lba_pos - '0');
+        lba_pos++;
+    }
+
+    return lba;
+}
+
 // Helper functions
 
 // Get current time (placeholder - returns 0 until we have a real-time clock)
@@ -598,7 +621,6 @@ static vnode_t* simplefs_inode_to_vnode(simplefs_data_t* fs_data, uint32_t inode
 // Filesystem operations implementation
 
 static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) {
-    (void)source;
     (void)flags;
     
     // serial_puts("SimpleFS: Mounting filesystem...\n");
@@ -615,7 +637,7 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     }
     
     memset(fs_data, 0, sizeof(simplefs_data_t));
-    fs_data->start_lba = 0; // Start at LBA 0 for now
+    fs_data->start_lba = simplefs_parse_source_lba(source);
     
     // Read superblock
     if (read_block(fs_data, 0, &fs_data->superblock) != 0) {

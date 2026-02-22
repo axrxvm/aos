@@ -13,6 +13,7 @@
 #include <serial.h>
 #include <multiboot.h>
 #include <boot_info.h>
+#include <abl_boot.h>
 #include <string.h>
 
 extern void kprint(const char *str);
@@ -26,6 +27,7 @@ static multiboot_module_t g_module_entries[BOOTINFO_MAX_MODULES];
 static multiboot_memory_map_t g_mmap_entries[BOOTINFO_MAX_MMAP_ENTRIES];
 static multiboot_vbe_controller_info_t g_vbe_controller_info;
 static multiboot_vbe_mode_info_t g_vbe_mode_info;
+static const char g_abl_bootloader_name[] = "ABL";
 
 static uint32_t align_up_8(uint32_t value) {
     return (value + 7U) & ~7U;
@@ -92,6 +94,203 @@ static uint32_t count_multiboot1_mmap_entries(const multiboot_info_t* mbi) {
     return count;
 }
 
+static uint32_t clamp_kib_from_bytes(uint64_t bytes) {
+    uint64_t kib = bytes / 1024ULL;
+    return (kib > 0xFFFFFFFFULL) ? 0xFFFFFFFFU : (uint32_t)kib;
+}
+
+static void derive_memory_kib_from_mmap(const multiboot_memory_map_t* entries,
+                                        uint32_t count,
+                                        uint32_t* out_lower_kib,
+                                        uint32_t* out_upper_kib) {
+    if (out_lower_kib) {
+        *out_lower_kib = 0;
+    }
+    if (out_upper_kib) {
+        *out_upper_kib = 0;
+    }
+    if (!entries || count == 0 || !out_lower_kib || !out_upper_kib) {
+        return;
+    }
+
+    uint64_t lower_bytes = 0;
+    uint64_t highest_available_end = 0;
+    const uint64_t one_mib = 0x100000ULL;
+
+    for (uint32_t i = 0; i < count; i++) {
+        const multiboot_memory_map_t* entry = &entries[i];
+        if (entry->type != 1) {
+            continue;
+        }
+
+        uint64_t start = entry->addr;
+        uint64_t end = entry->addr + entry->len;
+        if (end <= start) {
+            continue;
+        }
+
+        if (start < one_mib) {
+            uint64_t lower_end = (end < one_mib) ? end : one_mib;
+            if (lower_end > start) {
+                lower_bytes += (lower_end - start);
+            }
+        }
+
+        if (end > one_mib && end > highest_available_end) {
+            highest_available_end = end;
+        }
+    }
+
+    *out_lower_kib = clamp_kib_from_bytes(lower_bytes);
+    if (highest_available_end > one_mib) {
+        *out_upper_kib = clamp_kib_from_bytes(highest_available_end - one_mib);
+    }
+}
+
+static uint32_t parse_abl_mmap(const abl_boot_info_t* abl_info) {
+    if (!abl_info) {
+        return 0;
+    }
+    if (!(abl_info->flags & ABL_INFO_FLAG_MEMORY_MAP)) {
+        return 0;
+    }
+    if (abl_info->mmap_addr == 0 || abl_info->mmap_length == 0 ||
+        abl_info->mmap_entry_size < sizeof(multiboot_memory_map_t) ||
+        abl_info->mmap_entry_count == 0) {
+        return 0;
+    }
+
+    uintptr_t start_addr = (uintptr_t)abl_info->mmap_addr;
+    uintptr_t end_addr = start_addr + abl_info->mmap_length;
+    if (end_addr < start_addr) {
+        return 0;
+    }
+
+    const uint8_t* cursor = (const uint8_t*)start_addr;
+    const uint8_t* end = (const uint8_t*)end_addr;
+    uint32_t copied_entries = 0;
+
+    while (copied_entries < abl_info->mmap_entry_count &&
+           copied_entries < BOOTINFO_MAX_MMAP_ENTRIES) {
+        if (cursor > end || (uint32_t)(end - cursor) < abl_info->mmap_entry_size) {
+            break;
+        }
+
+        const multiboot_memory_map_t* src = (const multiboot_memory_map_t*)cursor;
+        multiboot_memory_map_t* dst = &g_mmap_entries[copied_entries];
+        memcpy(dst, src, sizeof(*dst));
+
+        if (dst->size == 0 || dst->size > abl_info->mmap_entry_size - sizeof(uint32_t)) {
+            dst->size = sizeof(multiboot_memory_map_t) - sizeof(uint32_t);
+        }
+
+        copied_entries++;
+        cursor += abl_info->mmap_entry_size;
+    }
+
+    if (copied_entries > 0) {
+        g_compat_mbi.flags |= MULTIBOOT_INFO_MEM_MAP;
+        g_compat_mbi.mmap_addr = ptr32(g_mmap_entries);
+        g_compat_mbi.mmap_length = copied_entries * sizeof(multiboot_memory_map_t);
+    }
+
+    return copied_entries;
+}
+
+static uint32_t parse_abl_modules(const abl_boot_info_t* abl_info) {
+    if (!abl_info) {
+        return 0;
+    }
+    if (!(abl_info->flags & ABL_INFO_FLAG_MODULES)) {
+        return 0;
+    }
+    if (abl_info->modules_addr == 0 || abl_info->modules_count == 0) {
+        return 0;
+    }
+
+    uint32_t max_copy = (abl_info->modules_count < BOOTINFO_MAX_MODULES) ?
+                        abl_info->modules_count : BOOTINFO_MAX_MODULES;
+    const multiboot_module_t* src = (const multiboot_module_t*)(uintptr_t)abl_info->modules_addr;
+    for (uint32_t i = 0; i < max_copy; i++) {
+        g_module_entries[i] = src[i];
+    }
+
+    if (max_copy > 0) {
+        g_compat_mbi.flags |= MULTIBOOT_INFO_MODS;
+        g_compat_mbi.mods_count = max_copy;
+        g_compat_mbi.mods_addr = ptr32(g_module_entries);
+    }
+
+    return max_copy;
+}
+
+static void parse_abl_vbe_info(const abl_boot_info_t* abl_info) {
+    if (!abl_info) {
+        return;
+    }
+    if (!(abl_info->flags & ABL_INFO_FLAG_VBE_INFO)) {
+        return;
+    }
+    if (abl_info->vbe_control_info_addr == 0 || abl_info->vbe_mode_info_addr == 0) {
+        return;
+    }
+
+    const multiboot_vbe_controller_info_t* src_ctrl =
+        (const multiboot_vbe_controller_info_t*)(uintptr_t)abl_info->vbe_control_info_addr;
+    const multiboot_vbe_mode_info_t* src_mode =
+        (const multiboot_vbe_mode_info_t*)(uintptr_t)abl_info->vbe_mode_info_addr;
+
+    memcpy(&g_vbe_controller_info, src_ctrl, sizeof(g_vbe_controller_info));
+    memcpy(&g_vbe_mode_info, src_mode, sizeof(g_vbe_mode_info));
+
+    g_compat_mbi.flags |= MULTIBOOT_INFO_VBE_INFO;
+    g_compat_mbi.vbe_control_info = ptr32(&g_vbe_controller_info);
+    g_compat_mbi.vbe_mode_info = ptr32(&g_vbe_mode_info);
+    g_compat_mbi.vbe_mode = (uint16_t)(abl_info->vbe_mode & 0xFFFFU);
+    g_compat_mbi.vbe_interface_seg = (uint16_t)(abl_info->vbe_interface_seg & 0xFFFFU);
+    g_compat_mbi.vbe_interface_off = (uint16_t)(abl_info->vbe_interface_off & 0xFFFFU);
+    g_compat_mbi.vbe_interface_len = (uint16_t)(abl_info->vbe_interface_len & 0xFFFFU);
+}
+
+static void parse_abl_framebuffer_info(const abl_boot_info_t* abl_info) {
+    if (!abl_info) {
+        return;
+    }
+
+    if (abl_info->flags & ABL_INFO_FLAG_FRAMEBUFFER) {
+        if (abl_info->framebuffer_addr == 0 || abl_info->framebuffer_width == 0 ||
+            abl_info->framebuffer_height == 0 || abl_info->framebuffer_bpp == 0) {
+            return;
+        }
+        g_compat_mbi.flags |= MULTIBOOT_INFO_FRAMEBUFFER_INFO;
+        g_compat_mbi.framebuffer_addr = (uint64_t)abl_info->framebuffer_addr;
+        g_compat_mbi.framebuffer_pitch = abl_info->framebuffer_pitch;
+        g_compat_mbi.framebuffer_width = abl_info->framebuffer_width;
+        g_compat_mbi.framebuffer_height = abl_info->framebuffer_height;
+        g_compat_mbi.framebuffer_bpp = (uint8_t)(abl_info->framebuffer_bpp & 0xFFU);
+        g_compat_mbi.framebuffer_type = (uint8_t)(abl_info->framebuffer_type & 0xFFU);
+        return;
+    }
+
+    // Fallback: if VBE mode info exists, derive framebuffer details from it.
+    if ((g_compat_mbi.flags & MULTIBOOT_INFO_VBE_INFO) && g_compat_mbi.vbe_mode_info != 0) {
+        const multiboot_vbe_mode_info_t* mode =
+            (const multiboot_vbe_mode_info_t*)(uintptr_t)g_compat_mbi.vbe_mode_info;
+        if (!mode || mode->framebuffer == 0 || mode->width == 0 || mode->height == 0 || mode->bpp == 0) {
+            return;
+        }
+
+        g_compat_mbi.flags |= MULTIBOOT_INFO_FRAMEBUFFER_INFO;
+        g_compat_mbi.framebuffer_addr = (uint64_t)mode->framebuffer;
+        g_compat_mbi.framebuffer_pitch = mode->pitch;
+        g_compat_mbi.framebuffer_width = mode->width;
+        g_compat_mbi.framebuffer_height = mode->height;
+        g_compat_mbi.framebuffer_bpp = mode->bpp;
+        g_compat_mbi.framebuffer_type =
+            (mode->bpp <= 8) ? MULTIBOOT_FRAMEBUFFER_TYPE_INDEXED : MULTIBOOT_FRAMEBUFFER_TYPE_RGB;
+    }
+}
+
 static void parse_multiboot1(uint32_t magic, const multiboot_info_t* mbi) {
     g_boot_runtime.protocol = BOOT_PROTOCOL_MULTIBOOT1;
     g_boot_runtime.boot_magic = magic;
@@ -109,6 +308,68 @@ static void parse_multiboot1(uint32_t magic, const multiboot_info_t* mbi) {
         g_boot_runtime.module_count = mbi->mods_count;
     }
     g_boot_runtime.mmap_entry_count = count_multiboot1_mmap_entries(mbi);
+}
+
+static void parse_abl(uint32_t magic, const abl_boot_info_t* abl_info) {
+    g_boot_runtime.protocol = BOOT_PROTOCOL_ABL;
+    g_boot_runtime.boot_magic = magic;
+    g_boot_runtime.raw_info_addr = (uintptr_t)abl_info;
+    g_boot_runtime.raw_info_size = sizeof(abl_boot_info_t);
+
+    memset(&g_compat_mbi, 0, sizeof(g_compat_mbi));
+    g_compat_mbi.flags |= MULTIBOOT_INFO_BOOT_LOADER_NAME;
+    g_compat_mbi.boot_loader_name = ptr32(g_abl_bootloader_name);
+
+    if (!abl_info || abl_info->magic != ABL_BOOT_MAGIC) {
+        g_boot_runtime.compat_mbi = &g_compat_mbi;
+        return;
+    }
+
+    if (abl_info->flags & ABL_INFO_FLAG_BOOT_DRIVE) {
+        g_compat_mbi.flags |= MULTIBOOT_INFO_BOOTDEV;
+        g_compat_mbi.boot_device = (abl_info->boot_drive & 0xFFU) | 0xFFFFFF00U;
+    }
+
+    if ((abl_info->flags & ABL_INFO_FLAG_CMDLINE) && abl_info->cmdline_addr != 0) {
+        g_compat_mbi.flags |= MULTIBOOT_INFO_CMDLINE;
+        g_compat_mbi.cmdline = abl_info->cmdline_addr;
+    }
+
+    if (abl_info->flags & ABL_INFO_FLAG_MEMORY_INFO) {
+        g_compat_mbi.flags |= MULTIBOOT_INFO_MEMORY;
+        g_compat_mbi.mem_lower = abl_info->mem_lower_kb;
+        g_compat_mbi.mem_upper = abl_info->mem_upper_kb;
+    }
+
+    g_boot_runtime.mmap_entry_count = parse_abl_mmap(abl_info);
+    g_boot_runtime.module_count = parse_abl_modules(abl_info);
+    parse_abl_vbe_info(abl_info);
+    parse_abl_framebuffer_info(abl_info);
+
+    if (g_boot_runtime.mmap_entry_count > 0) {
+        uint32_t derived_lower = 0;
+        uint32_t derived_upper = 0;
+        derive_memory_kib_from_mmap(g_mmap_entries, g_boot_runtime.mmap_entry_count,
+                                    &derived_lower, &derived_upper);
+
+        if (!(g_compat_mbi.flags & MULTIBOOT_INFO_MEMORY)) {
+            g_compat_mbi.mem_lower = derived_lower;
+            g_compat_mbi.mem_upper = derived_upper;
+        } else {
+            if (derived_lower > g_compat_mbi.mem_lower) {
+                g_compat_mbi.mem_lower = derived_lower;
+            }
+            if (derived_upper > g_compat_mbi.mem_upper) {
+                g_compat_mbi.mem_upper = derived_upper;
+            }
+        }
+
+        if (g_compat_mbi.mem_lower != 0 || g_compat_mbi.mem_upper != 0) {
+            g_compat_mbi.flags |= MULTIBOOT_INFO_MEMORY;
+        }
+    }
+
+    g_boot_runtime.compat_mbi = &g_compat_mbi;
 }
 
 static void parse_multiboot2_mmap_tag(const multiboot2_tag_mmap_t* mmap_tag, const multiboot2_tag_t* tag) {
@@ -299,6 +560,10 @@ static void parse_multiboot2(uint32_t magic, const multiboot2_info_t* mb2) {
 void boot_info_init(uint32_t multiboot_magic, const void* raw_boot_info) {
     reset_boot_runtime();
 
+    if (multiboot_magic == ABL_BOOT_MAGIC) {
+        parse_abl(multiboot_magic, (const abl_boot_info_t*)raw_boot_info);
+        return;
+    }
     if (multiboot_magic == MULTIBOOT_BOOTLOADER_MAGIC) {
         parse_multiboot1(multiboot_magic, (const multiboot_info_t*)raw_boot_info);
         return;
@@ -328,6 +593,8 @@ void boot_info_print_serial(void) {
         serial_puts("Multiboot1\n");
     } else if (g_boot_runtime.protocol == BOOT_PROTOCOL_MULTIBOOT2) {
         serial_puts("Multiboot2\n");
+    } else if (g_boot_runtime.protocol == BOOT_PROTOCOL_ABL) {
+        serial_puts("ABL\n");
     } else {
         serial_puts("Unknown\n");
     }
@@ -359,6 +626,8 @@ void boot_info_print_console(void) {
         kprint("Protocol: Multiboot1");
     } else if (g_boot_runtime.protocol == BOOT_PROTOCOL_MULTIBOOT2) {
         kprint("Protocol: Multiboot2");
+    } else if (g_boot_runtime.protocol == BOOT_PROTOCOL_ABL) {
+        kprint("Protocol: ABL");
     } else {
         kprint("Protocol: Unknown");
     }
@@ -463,7 +732,8 @@ void print_boot_info(const multiboot_info_t *mbi) {
         return;
     }
 
-    serial_puts("\n=== Multiboot Information ===\n");
+    serial_puts("\n=== Boot Compatibility Information ===\n");
+    serial_puts("(Multiboot-compatible layout)\n");
     serial_puts("Flags: 0x");
     serial_put_uint32(mbi->flags);
     serial_puts("\n");
@@ -528,7 +798,7 @@ void print_boot_info(const multiboot_info_t *mbi) {
         serial_puts("\n");
     }
 
-    serial_puts("=== End Multiboot Information ===\n");
+    serial_puts("=== End Boot Compatibility Information ===\n");
 }
 
 char hex_digit(uint8_t val) {

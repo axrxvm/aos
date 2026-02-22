@@ -17,7 +17,8 @@
 typedef enum {
     BOOT_PROTOCOL_UNKNOWN = 0,
     BOOT_PROTOCOL_MULTIBOOT1 = 1,
-    BOOT_PROTOCOL_MULTIBOOT2 = 2
+    BOOT_PROTOCOL_MULTIBOOT2 = 2,
+    BOOT_PROTOCOL_ABL = 3
 } boot_protocol_t;
 
 typedef struct {

@@ -420,7 +420,7 @@ int memcmp(const void *s1, const void *s2, size_t n) {
     return 0;
 }
 
-// Simple snprintf implementation - supports %d, %s, %c, %x
+// Simple snprintf implementation - supports %d, %u, %s, %c, %x
 int snprintf(char *str, size_t size, const char *format, ...) {
     if (size == 0) {
         return 0;
@@ -454,6 +454,30 @@ int snprintf(char *str, size_t size, const char *format, ...) {
                         }
                     } else {
                         int divisor = 1;
+                        while (num / divisor >= 10) {
+                            divisor *= 10;
+                        }
+                        while (divisor >= 1) {
+                            char digit = '0' + (num / divisor);
+                            if (remaining > 0) {
+                                *out++ = digit;
+                                remaining--;
+                            }
+                            num %= divisor;
+                            divisor /= 10;
+                        }
+                    }
+                    break;
+                }
+                case 'u': {
+                    unsigned int num = __builtin_va_arg(args, unsigned int);
+                    if (num == 0) {
+                        if (remaining > 0) {
+                            *out++ = '0';
+                            remaining--;
+                        }
+                    } else {
+                        unsigned int divisor = 1;
                         while (num / divisor >= 10) {
                             divisor *= 10;
                         }

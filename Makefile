@@ -84,6 +84,18 @@ AOSH_ELF = $(BUILD_DIR)/ubin/aosh.elf
 AOSH_BIN = $(BUILD_DIR)/ubin/aosh.bin
 AOSH_PAYLOAD = $(BUILD_DIR)/ubin/aosh_payload.o
 
+# === Bootloader binary embedding (written by in-OS installer) ===
+BOOTLOADER_SRC_DIR = bootloader
+BOOTLOADER_BUILD_DIR = $(BUILD_DIR)/bootloader
+ABL_MBR_ASM = $(BOOTLOADER_SRC_DIR)/abl_mbr.asm
+ABL_STAGE2_ASM = $(BOOTLOADER_SRC_DIR)/abl_stage2.asm
+ABL_MBR_BIN = $(BOOTLOADER_BUILD_DIR)/abl_mbr.bin
+ABL_STAGE2_BIN = $(BOOTLOADER_BUILD_DIR)/abl_stage2.bin
+ABL_MBR_OBJ = $(BOOTLOADER_BUILD_DIR)/abl_mbr_payload.o
+ABL_STAGE2_OBJ = $(BOOTLOADER_BUILD_DIR)/abl_stage2_payload.o
+KERNEL_BOOT_DEPS = $(ABL_MBR_OBJ) $(ABL_STAGE2_OBJ)
+KERNEL_BOOT_OBJS = $(ABL_MBR_OBJ) $(ABL_STAGE2_OBJ)
+
 ifeq ($(BUILD_AOSH),1)
 KERNEL_EXTRA_DEPS = $(AOSH_PAYLOAD)
 KERNEL_EXTRA_OBJS = $(AOSH_PAYLOAD)
@@ -132,12 +144,35 @@ $(AOSH_PAYLOAD): $(AOSH_BIN)
 		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
 		$(notdir $<) $(notdir $@)
 
+# === Bootloader embedding targets ===
+$(ABL_MBR_BIN): $(ABL_MBR_ASM)
+	@echo "Assembling custom MBR stage..."
+	@mkdir -p $(dir $@)
+	$(AS) -f bin $< -o $@
+
+$(ABL_STAGE2_BIN): $(ABL_STAGE2_ASM)
+	@echo "Assembling custom stage2 loader..."
+	@mkdir -p $(dir $@)
+	$(AS) -f bin $< -o $@
+
+$(ABL_MBR_OBJ): $(ABL_MBR_BIN)
+	@echo "Embedding MBR stage in kernel..."
+	cd $(dir $<) && objcopy -I binary -O $(AOSH_PAYLOAD_FORMAT) -B $(AOSH_PAYLOAD_ARCH) \
+		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+		$(notdir $<) $(notdir $@)
+
+$(ABL_STAGE2_OBJ): $(ABL_STAGE2_BIN)
+	@echo "Embedding stage2 loader in kernel..."
+	cd $(dir $<) && objcopy -I binary -O $(AOSH_PAYLOAD_FORMAT) -B $(AOSH_PAYLOAD_ARCH) \
+		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+		$(notdir $<) $(notdir $@)
+
 # Link ELF (kernel + embedded userspace payload)
-$(KERNEL_ELF): $(LINKER_SCRIPT) $(ALL_OBJECTS) $(KERNEL_EXTRA_DEPS)
+$(KERNEL_ELF): $(LINKER_SCRIPT) $(ALL_OBJECTS) $(KERNEL_EXTRA_DEPS) $(KERNEL_BOOT_DEPS)
 	@echo "Creating object file directories..."
 	@mkdir -p $(sort $(dir $(ALL_OBJECTS)))
 	@echo "Linking kernel ELF..."
-	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $(KERNEL_ELF) $(ALL_OBJECTS) $(KERNEL_EXTRA_OBJS)
+	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $(KERNEL_ELF) $(ALL_OBJECTS) $(KERNEL_EXTRA_OBJS) $(KERNEL_BOOT_OBJS)
 
 # Create the ISO with the kernel and grub configuration
 iso-arch: $(KERNEL_ELF) $(GRUB_CFG)
@@ -240,6 +275,18 @@ run-sn-user: iso-arch
 		-drive file=$(DISK_IMG),format=raw,index=0,media=disk \
 		-netdev user,id=net0 -device e1000,netdev=net0,mac=52:54:00:12:34:56 | tee serial.log
 
+# Run from disk image only (no ISO attached)
+run-disk:
+	@echo "Checking for disk image..."
+	@if [ ! -f $(DISK_IMG) ]; then \
+		echo "Error: $(DISK_IMG) not found. Create it and run install from ISO mode first."; \
+		exit 1; \
+	fi
+	@echo "Running in QEMU ($(ARCH)) from disk only..."
+	@echo "Serial output will be saved to serial.log"
+	qemu-system-$(QEMU_ARCH) -m 128M -boot c -serial stdio \
+		-drive file=$(DISK_IMG),format=raw,index=0,media=disk | tee serial.log
+
 # Print current architecture configuration
 arch-info:
 	@echo "Current architecture: $(ARCH)"
@@ -248,4 +295,4 @@ arch-info:
 	@echo "LDFLAGS: $(LDFLAGS)"
 
 # Phony targets
-.PHONY: all iso iso-arch iso-all run run-vga run-nographic run-debug run-s run-sn run-sn-user clean arch-info
+.PHONY: all iso iso-arch iso-all run run-vga run-nographic run-debug run-s run-sn run-sn-user run-disk clean arch-info

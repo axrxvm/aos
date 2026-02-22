@@ -68,6 +68,7 @@
 #include <acpi.h>      // For ACPI power management (v0.8.2)
 #include <apm.h>       // For aOS Package Manager (v0.8.5)
 #include <krm.h>       // For Kernel Recovery Mode (v0.8.8)
+#include <abl_boot.h>  // For ABL boot protocol
 
 // Simple kernel print function (prints to VGA for now)
 // Ensure vga_puts is available and initialized before kprint is used extensively.
@@ -124,15 +125,18 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
 
 
     if (multiboot_magic != MULTIBOOT_BOOTLOADER_MAGIC &&
-        multiboot_magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
+        multiboot_magic != MULTIBOOT2_BOOTLOADER_MAGIC &&
+        multiboot_magic != ABL_BOOT_MAGIC) {
         serial_puts("Invalid boot magic: 0x");
         serial_put_uint32(multiboot_magic);
         serial_puts("\nExpected 0x");
+        serial_put_uint32(ABL_BOOT_MAGIC);
+        serial_puts(" (ABL) or 0x");
         serial_put_uint32(MULTIBOOT_BOOTLOADER_MAGIC);
         serial_puts(" (Multiboot1) or 0x");
         serial_put_uint32(MULTIBOOT2_BOOTLOADER_MAGIC);
         serial_puts(" (Multiboot2)\n");
-        panic("Invalid Multiboot magic number!");
+        panic("Invalid boot magic number!");
     }
 
     if (!raw_boot_info) {
@@ -216,6 +220,17 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     // Reserve the full loaded kernel image (code/data/bss/boot tables) so PMM
     // does not hand out frames that back active kernel state.
     pmm_reserve_region((uint32_t)(uintptr_t)&__kernel_start, (uint32_t)(uintptr_t)&__kernel_end);
+    // Reserve multiboot module memory (used by installer payload and other boot modules).
+    if (multiboot_info && multiboot_info->mods_count > 0 && multiboot_info->mods_addr) {
+        const multiboot_module_t* mods = (const multiboot_module_t*)(uintptr_t)multiboot_info->mods_addr;
+        for (uint32_t i = 0; i < multiboot_info->mods_count; i++) {
+            uint32_t mod_start = mods[i].mod_start;
+            uint32_t mod_end = mods[i].mod_end;
+            if (mod_end > mod_start) {
+                pmm_reserve_region(mod_start, mod_end);
+            }
+        }
+    }
     
     // Initialize paging system
     init_paging();
@@ -313,6 +328,11 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     serial_puts("About to initialize ATA driver...\n");
     ata_init();
     serial_puts("ATA driver initialized successfully.\n");
+
+    // Initialize partition manager before mounting root so installed layouts can be detected.
+    serial_puts("About to initialize partition manager...\n");
+    init_partitions();
+    serial_puts("Partition manager initialized.\n");
     
     // Initialize SimpleFS driver
     serial_puts("About to initialize SimpleFS...\n");
@@ -327,22 +347,69 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     // Try to mount SimpleFS as root filesystem
     serial_puts("About to mount root filesystem...\n");
     if (ata_drive_available()) {
-        // Try to mount existing SimpleFS first, then FAT32
-        if (vfs_mount(NULL, "/", "simplefs", 0) != VFS_OK) {
-            serial_puts("SimpleFS mount failed - trying FAT32...\n");
-            if (vfs_mount(NULL, "/", "fat32", 0) != VFS_OK) {
-                serial_puts("FAT32 mount failed - disk appears unformatted\n");
-                serial_puts("Falling back to ramfs. Use 'format' command to initialize disk.\n");
-                unformatted_disk_detected = 1;  // Set flag for shell notification
-                simplefs_mounted = 0;  // No filesystem mounted
-                goto use_ramfs;
+        partition_t* root_part = NULL;
+        char root_source[48] = {0};
+        int root_part_id = partition_find_first_by_type_and_fs(PART_TYPE_DATA, PART_FS_SIMPLEFS);
+        if (root_part_id < 0) {
+            root_part_id = partition_find_first_by_type_and_fs(PART_TYPE_DATA, PART_FS_FAT32);
+        }
+        if (root_part_id < 0) {
+            root_part_id = partition_find_first_by_type(PART_TYPE_DATA);
+        }
+        if (root_part_id < 0) {
+            root_part_id = partition_find_first_by_type(PART_TYPE_SYSTEM);
+        }
+        if (root_part_id >= 0) {
+            root_part = partition_get(root_part_id);
+        }
+
+        if (root_part && root_part->sector_count > 0) {
+            snprintf(root_source, sizeof(root_source), "lba=%u", root_part->start_sector);
+
+            const char* primary_fs = "simplefs";
+            const char* secondary_fs = "fat32";
+            if (root_part->filesystem_type == PART_FS_FAT32) {
+                primary_fs = "fat32";
+                secondary_fs = "simplefs";
+            }
+
+            serial_puts("Detected installed partition layout, attempting root mount from partition...\n");
+            if (vfs_mount(root_source, "/", primary_fs, 0) != VFS_OK) {
+                serial_puts("Primary partition filesystem mount failed, trying fallback filesystem...\n");
+                if (vfs_mount(root_source, "/", secondary_fs, 0) != VFS_OK) {
+                    serial_puts("Partition root mount failed.\n");
+                    serial_puts("Falling back to direct disk filesystem probe...\n");
+                    root_part = NULL;
+                } else {
+                    serial_puts("Partition root mounted with fallback filesystem.\n");
+                    simplefs_mounted = 1;
+                }
             } else {
-                serial_puts("FAT32 mounted successfully.\n");
+                serial_puts("Partition root mounted successfully.\n");
+                simplefs_mounted = 1;
+            }
+        }
+
+        if (!root_part || !simplefs_mounted) {
+            // Legacy fallback: probe filesystem at LBA 0.
+            if (vfs_mount(NULL, "/", "simplefs", 0) != VFS_OK) {
+                serial_puts("SimpleFS mount failed - trying FAT32...\n");
+                if (vfs_mount(NULL, "/", "fat32", 0) != VFS_OK) {
+                    serial_puts("FAT32 mount failed - disk appears unformatted\n");
+                    serial_puts("Falling back to ramfs. Use 'install' or 'format' command to initialize disk.\n");
+                    unformatted_disk_detected = 1;  // Set flag for shell notification
+                    simplefs_mounted = 0;  // No filesystem mounted
+                    goto use_ramfs;
+                } else {
+                    serial_puts("FAT32 mounted successfully.\n");
+                    simplefs_mounted = 1;  // Disk mounted (FAT32 or SimpleFS enables LOCAL mode)
+                }
+            } else {
+                serial_puts("SimpleFS mounted successfully.\n");
                 simplefs_mounted = 1;  // Disk mounted (FAT32 or SimpleFS enables LOCAL mode)
             }
         } else {
-            serial_puts("SimpleFS mounted successfully.\n");
-            simplefs_mounted = 1;  // Disk mounted (FAT32 or SimpleFS enables LOCAL mode)
+            // Partition root mount path already succeeded.
         }
     } else {
         serial_puts("No ATA drive available, using ramfs\n");
@@ -456,11 +523,6 @@ mount_done:
     serial_puts("Initializing IPC...\n");
     init_ipc();
     serial_puts("IPC initialized.\n");
-    
-    // Initialize partition manager
-    serial_puts("Initializing partition manager...\n");
-    init_partitions();
-    serial_puts("Partition manager initialized.\n");
     
     // Initialize environment variables
     serial_puts("Initializing environment variables...\n");

@@ -24,6 +24,11 @@
 #define PART_TYPE_SWAP     0x03  // Swap space
 #define PART_TYPE_RAMDISK  0x04  // RAM disk
 
+// Filesystem identifiers for partition metadata
+#define PART_FS_UNKNOWN    0x00000000
+#define PART_FS_SIMPLEFS   0x53465332  // "SFS2"
+#define PART_FS_FAT32      0x46415433  // "FAT3"
+
 // Partition structure
 typedef struct {
     char name[PARTITION_NAME_LEN];  // Partition label
@@ -48,8 +53,11 @@ void init_partitions(void);
 // Partition operations
 int partition_create(const char* name, uint8_t type, uint32_t start_sector, uint32_t size_sectors);
 int partition_delete(int partition_id);
+void partition_clear(void);
 int partition_list(void);
 partition_t* partition_get(int partition_id);
+int partition_find_first_by_type(uint8_t type);
+int partition_find_first_by_type_and_fs(uint8_t type, uint32_t filesystem_type);
 int partition_mount(int partition_id, const char* mount_point, const char* fs_type);
 int partition_unmount(int partition_id);
 

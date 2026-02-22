@@ -681,8 +681,8 @@ void shell_run(void) {
         vga_set_color(0x0E); // Yellow for information
         vga_puts("[INFO] Unformatted disk detected!\n");
         vga_set_color(0x0F); // White
-        vga_puts("To use the disk for persistent storage, run the 'format' command.\n");
-        vga_puts("Note: This will prepare the disk with the SimpleFS filesystem.\n\n");
+        vga_puts("To install aOS on this disk, run the 'install' command.\n");
+        vga_puts("For data-only setup, use 'format simplefs'.\n\n");
         unformatted_disk_detected = 0;  // Clear flag after displaying
     }
     
