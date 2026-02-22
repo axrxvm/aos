@@ -35,14 +35,14 @@ extern char _binary_aosh_bin_start[];
 extern char _binary_aosh_bin_end[];
 
 // Simple hex printer for serial debug
-static void print_hex(const char* prefix, uint32_t value) {
-    char buf[50];
+static void print_hex(const char* prefix, uintptr_t value) {
+    char buf[72];
     int i = 0;
     const char* p = prefix;
-    while (*p && i < 40) buf[i++] = *p++;
+    while (*p && i < (int)sizeof(buf) - 20) buf[i++] = *p++;
     buf[i++] = '0'; buf[i++] = 'x';
-    for (int shift = 28; shift >= 0; shift -= 4) {
-        int digit = (value >> shift) & 0xF;
+    for (int shift = (int)(sizeof(uintptr_t) * 8) - 4; shift >= 0; shift -= 4) {
+        int digit = (int)((value >> shift) & 0xF);
         buf[i++] = (digit < 10) ? ('0' + digit) : ('a' + digit - 10);
     }
     buf[i++] = '\n'; buf[i] = '\0';
@@ -67,9 +67,9 @@ void userspace_run(void) {
     serial_puts("=== Starting Ring 3 Userspace Shell ===\n");
 
     extern process_t* process_get_current(void);
-    extern void* vmm_alloc_at(address_space_t *as, uint32_t virtual_addr, size_t size, uint32_t flags);
+    extern void* vmm_alloc_at(address_space_t *as, uintptr_t virtual_addr, size_t size, uint32_t flags);
     extern address_space_t* kernel_address_space;
-    extern void enter_usermode(uint32_t entry_point, uint32_t user_stack, int argc, char** argv);
+    extern void enter_usermode(uintptr_t entry_point, uintptr_t user_stack, int argc, char** argv);
 
     process_t* current = process_get_current();
     if (!current) {
@@ -81,13 +81,13 @@ void userspace_run(void) {
     process_set_current_identity("aosh", TASK_TYPE_SHELL, PRIORITY_NORMAL, 3);
 
     /* --- Compute embedded binary size --- */
-    uint32_t bin_size = (uint32_t)(_binary_aosh_bin_end - _binary_aosh_bin_start);
-    uint32_t code_pages = (bin_size + 4095) / 4096;  /* round up to pages */
+    size_t bin_size = (size_t)(_binary_aosh_bin_end - _binary_aosh_bin_start);
+    size_t code_pages = (bin_size + PAGE_SIZE - 1) / PAGE_SIZE;  /* round up to pages */
     
     /* Add extra pages for BSS segment (static uninitialized data like history arrays)
      * Binary: ~8.8 KB, BSS: ~12.8 KB (history[50][256]), plus stack buffer headroom */
     code_pages += 5;  /* Add 5 extra pages (20 KB) for BSS and safety margin */
-    uint32_t code_alloc = code_pages * 4096;
+    size_t code_alloc = code_pages * PAGE_SIZE;
 
     print_hex("Shell binary size: ", bin_size);
     print_hex("Pages needed:      ", code_pages);
@@ -98,10 +98,10 @@ void userspace_run(void) {
         return;
     }
 
-    uint32_t user_code_addr;
-    uint32_t stack_top;
-    uint32_t stack_pages;
-    uint32_t stack_base;
+    uintptr_t user_code_addr;
+    uintptr_t stack_top;
+    size_t stack_pages;
+    uintptr_t stack_base;
 
     /* --- Step 1: Allocate user code pages at 0x08048000 --- */
     user_code_addr = VMM_USER_CODE_START;  /* 0x08048000 */
@@ -126,15 +126,15 @@ void userspace_run(void) {
      * compiler-emitted movaps faults on stack locals.
      */
 #ifdef ARCH_X86_64
-    stack_top   = 0xBFFFFFF8;
+    stack_top   = (uintptr_t)0x00000000BFFFFFF8ULL;
 #else
-    stack_top   = 0xBFFFFFF0;          /* 16-byte aligned */
+    stack_top   = (uintptr_t)0xBFFFFFF0U;          /* 16-byte aligned */
 #endif
     stack_pages = 4;                   /* 16 KB */
-    stack_base  = 0xC0000000 - (stack_pages * 4096);
+    stack_base  = (uintptr_t)0xC0000000 - (stack_pages * PAGE_SIZE);
 
     void* user_stack = vmm_alloc_at(kernel_address_space,
-                                    stack_base, stack_pages * 4096,
+                                    stack_base, stack_pages * PAGE_SIZE,
                                     VMM_PRESENT | VMM_WRITE | VMM_USER);
     if (!user_stack) {
         serial_puts("ERROR: Failed to allocate user stack!\n");
@@ -159,11 +159,11 @@ void userspace_run(void) {
         userspace_run_legacy();
         return;
     }
-    current->kernel_stack = (uint32_t)(uintptr_t)kstack_mem + 8192;  /* stack top */
+    current->kernel_stack = (uintptr_t)kstack_mem + 8192;  /* stack top */
     print_hex("KStk  @ ", current->kernel_stack);
 
     /* Set kernel privilege-transition stack (TSS.esp0 / TSS.rsp0). */
-    extern void arch_set_kernel_stack(uint32_t stack);
+    extern void arch_set_kernel_stack(uintptr_t stack);
     arch_set_kernel_stack(current->kernel_stack);
 
     /* --- Step 5: Enter ring 3 (never returns) --- */

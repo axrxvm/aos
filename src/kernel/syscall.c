@@ -26,6 +26,7 @@
 #include <dev/mouse.h>
 #include <acpi.h>
 #include <stdlib.h>
+#include <limits.h>
 
 // Forward declaration for process functions
 extern void process_exit(int status);
@@ -86,101 +87,169 @@ static void syscall_check_scheduled_shutdown(void) {
 }
 
 // System call table
-typedef int (*syscall_handler_t)(uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+typedef intptr_t (*syscall_handler_t)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 
-static int syscall_exit(uint32_t status, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static int syscall_to_u32(uintptr_t value, uint32_t* out) {
+    if (!out || value > UINT32_MAX) {
+        return -1;
+    }
+    *out = (uint32_t)value;
+    return 0;
+}
+
+static int syscall_to_int(uintptr_t value, int* out) {
+    if (!out) {
+        return -1;
+    }
+    intptr_t signed_value = (intptr_t)value;
+    if (signed_value < INT_MIN || signed_value > INT_MAX) {
+        return -1;
+    }
+    *out = (int)signed_value;
+    return 0;
+}
+
+static intptr_t syscall_exit(uintptr_t status, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     process_exit((int)status);
     return 0;  // Never reached
 }
 
-static int syscall_fork(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_fork(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     return process_fork();
 }
 
-static int syscall_read(uint32_t fd, uint32_t buffer, uint32_t size, uint32_t d, uint32_t e) {
+static intptr_t syscall_read(uintptr_t fd, uintptr_t buffer, uintptr_t size, uintptr_t d, uintptr_t e) {
     (void)d; (void)e;
-    return vfs_read((int)fd, (void*)buffer, size);
+    int fd_value = 0;
+    uint32_t size_value = 0;
+    if (syscall_to_int(fd, &fd_value) != 0 || syscall_to_u32(size, &size_value) != 0) {
+        return -1;
+    }
+    return vfs_read(fd_value, (void*)buffer, size_value);
 }
 
-static int syscall_write(uint32_t fd, uint32_t buffer, uint32_t size, uint32_t d, uint32_t e) {
+static intptr_t syscall_write(uintptr_t fd, uintptr_t buffer, uintptr_t size, uintptr_t d, uintptr_t e) {
     (void)d; (void)e;
-    return vfs_write((int)fd, (const void*)buffer, size);
+    int fd_value = 0;
+    uint32_t size_value = 0;
+    if (syscall_to_int(fd, &fd_value) != 0 || syscall_to_u32(size, &size_value) != 0) {
+        return -1;
+    }
+    return vfs_write(fd_value, (const void*)buffer, size_value);
 }
 
-static int syscall_open(uint32_t path, uint32_t flags, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_open(uintptr_t path, uintptr_t flags, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
-    return vfs_open((const char*)path, flags);
+    uint32_t flags_value = 0;
+    if (syscall_to_u32(flags, &flags_value) != 0) {
+        return -1;
+    }
+    return vfs_open((const char*)path, flags_value);
 }
 
-static int syscall_close(uint32_t fd, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_close(uintptr_t fd, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
-    return vfs_close((int)fd);
+    int fd_value = 0;
+    if (syscall_to_int(fd, &fd_value) != 0) {
+        return -1;
+    }
+    return vfs_close(fd_value);
 }
 
-static int syscall_waitpid(uint32_t pid, uint32_t status, uint32_t options, uint32_t d, uint32_t e) {
+static intptr_t syscall_waitpid(uintptr_t pid, uintptr_t status, uintptr_t options, uintptr_t d, uintptr_t e) {
     (void)d; (void)e;
-    return process_waitpid((int)pid, (int*)status, (int)options);
+    int pid_value = 0;
+    int options_value = 0;
+    if (syscall_to_int(pid, &pid_value) != 0 || syscall_to_int(options, &options_value) != 0) {
+        return -1;
+    }
+    return process_waitpid(pid_value, (int*)status, options_value);
 }
 
-static int syscall_execve(uint32_t path, uint32_t argv, uint32_t envp, uint32_t d, uint32_t e) {
+static intptr_t syscall_execve(uintptr_t path, uintptr_t argv, uintptr_t envp, uintptr_t d, uintptr_t e) {
     (void)d; (void)e;
     return process_execve((const char*)path, (char* const*)argv, (char* const*)envp);
 }
 
-static int syscall_getpid(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getpid(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     return process_getpid();
 }
 
-static int syscall_kill(uint32_t pid, uint32_t signal, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_kill(uintptr_t pid, uintptr_t signal, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
-    return process_kill((int)pid, (int)signal);
+    int pid_value = 0;
+    int signal_value = 0;
+    if (syscall_to_int(pid, &pid_value) != 0 || syscall_to_int(signal, &signal_value) != 0) {
+        return -1;
+    }
+    return process_kill(pid_value, signal_value);
 }
 
-static int syscall_lseek(uint32_t fd, uint32_t offset, uint32_t whence, uint32_t d, uint32_t e) {
+static intptr_t syscall_lseek(uintptr_t fd, uintptr_t offset, uintptr_t whence, uintptr_t d, uintptr_t e) {
     (void)d; (void)e;
-    return vfs_lseek((int)fd, (int)offset, (int)whence);
+    int fd_value = 0;
+    int offset_value = 0;
+    int whence_value = 0;
+    if (syscall_to_int(fd, &fd_value) != 0 ||
+        syscall_to_int(offset, &offset_value) != 0 ||
+        syscall_to_int(whence, &whence_value) != 0) {
+        return -1;
+    }
+    return vfs_lseek(fd_value, offset_value, whence_value);
 }
 
-static int syscall_readdir(uint32_t fd, uint32_t dirent, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_readdir(uintptr_t fd, uintptr_t dirent, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
-    return vfs_readdir((int)fd, (dirent_t*)dirent);
+    int fd_value = 0;
+    if (syscall_to_int(fd, &fd_value) != 0) {
+        return -1;
+    }
+    return vfs_readdir(fd_value, (dirent_t*)dirent);
 }
 
-static int syscall_mkdir(uint32_t path, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_mkdir(uintptr_t path, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     return vfs_mkdir((const char*)path);
 }
 
-static int syscall_rmdir(uint32_t path, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_rmdir(uintptr_t path, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     return vfs_rmdir((const char*)path);
 }
 
-static int syscall_unlink(uint32_t path, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_unlink(uintptr_t path, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     return vfs_unlink((const char*)path);
 }
 
-static int syscall_stat(uint32_t path, uint32_t stat, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_stat(uintptr_t path, uintptr_t stat, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     return vfs_stat((const char*)path, (stat_t*)stat);
 }
 
-static int syscall_sbrk(uint32_t increment, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_sbrk(uintptr_t increment, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
-    return (int)process_sbrk((int)increment);
+    int increment_value = 0;
+    if (syscall_to_int(increment, &increment_value) != 0) {
+        return -1;
+    }
+    return (intptr_t)process_sbrk(increment_value);
 }
 
-static int syscall_sleep(uint32_t milliseconds, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_sleep(uintptr_t milliseconds, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
-    process_sleep(milliseconds);
+    uint32_t ms_value = 0;
+    if (syscall_to_u32(milliseconds, &ms_value) != 0) {
+        return -1;
+    }
+    process_sleep(ms_value);
     return 0;
 }
 
-static int syscall_yield(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_yield(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     process_yield();
     return 0;
@@ -188,13 +257,13 @@ static int syscall_yield(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_
 
 // === Ring 3 Shell Syscalls ===
 
-static int syscall_putchar(uint32_t ch, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_putchar(uintptr_t ch, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     vga_putc((char)ch);
     return 0;
 }
 
-static int syscall_getchar(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getchar(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     // INT 0x80 entry runs with IF cleared in this kernel; re-enable IRQs here
     // so PIT timekeeping continues while waiting for user input.
@@ -233,61 +302,63 @@ static int syscall_getchar(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint3
     }
 }
 
-static int syscall_kcmd(uint32_t cmd_ptr, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_kcmd(uintptr_t cmd_ptr, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     const char* cmd = (const char*)cmd_ptr;
     if (!cmd || !*cmd) return -1;
     return execute_command(cmd);
 }
 
-static int syscall_getcwd(uint32_t buf_ptr, uint32_t len, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getcwd(uintptr_t buf_ptr, uintptr_t len, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     char* buf = (char*)buf_ptr;
-    if (!buf || len == 0) return -1;
+    size_t max_len = (size_t)len;
+    if (!buf || max_len == 0) return -1;
     const char* cwd = vfs_getcwd();
     if (!cwd) { buf[0] = '/'; buf[1] = '\0'; return 1; }
-    uint32_t slen = strlen(cwd);
-    if (slen >= len) slen = len - 1;
+    size_t slen = strlen(cwd);
+    if (slen >= max_len) slen = max_len - 1;
     memcpy(buf, cwd, slen);
     buf[slen] = '\0';
-    return (int)slen;
+    return (intptr_t)slen;
 }
 
-static int syscall_setcolor(uint32_t color, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_setcolor(uintptr_t color, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     vga_set_color((uint8_t)color);
     return 0;
 }
 
-static int syscall_clear(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_clear(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_clear_all();
     return 0;
 }
 
-static int syscall_getuser(uint32_t buf_ptr, uint32_t len, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getuser(uintptr_t buf_ptr, uintptr_t len, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     char* buf = (char*)buf_ptr;
-    if (!buf || len == 0) return -1;
+    size_t max_len = (size_t)len;
+    if (!buf || max_len == 0) return -1;
     session_t* session = user_get_session();
     if (!session || !session->user) {
         // No user logged in - return "?" as placeholder
         buf[0] = '?'; buf[1] = '\0';
         return 1;
     }
-    uint32_t slen = strlen(session->user->username);
-    if (slen >= len) slen = len - 1;
+    size_t slen = strlen(session->user->username);
+    if (slen >= max_len) slen = max_len - 1;
     memcpy(buf, session->user->username, slen);
     buf[slen] = '\0';
-    return (int)slen;
+    return (intptr_t)slen;
 }
 
-static int syscall_isroot(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_isroot(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     return user_is_root();
 }
 
-static int syscall_login(uint32_t user_ptr, uint32_t pass_ptr, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_login(uintptr_t user_ptr, uintptr_t pass_ptr, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     const char* username = (const char*)user_ptr;
     const char* password = (const char*)pass_ptr;
@@ -315,26 +386,27 @@ static int syscall_login(uint32_t user_ptr, uint32_t pass_ptr, uint32_t c, uint3
     return 0;
 }
 
-static int syscall_logout(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_logout(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     user_logout();
     return 0;
 }
 
-static int syscall_getversion(uint32_t buf_ptr, uint32_t len, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getversion(uintptr_t buf_ptr, uintptr_t len, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     char* buf = (char*)buf_ptr;
-    if (!buf || len == 0) return -1;
+    size_t max_len = (size_t)len;
+    if (!buf || max_len == 0) return -1;
     
     const char* version = AOS_VERSION_SHORT;
     size_t vlen = strlen(version);
-    if (vlen >= len) vlen = len - 1;
+    if (vlen >= max_len) vlen = max_len - 1;
     memcpy(buf, version, vlen);
     buf[vlen] = '\0';
-    return (int)vlen;
+    return (intptr_t)vlen;
 }
 
-static int syscall_isfirsttime(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_isfirsttime(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     user_t* root = user_find_by_name("root");
     if (!root) return 0;
@@ -351,14 +423,14 @@ static int syscall_isfirsttime(uint32_t a, uint32_t b, uint32_t c, uint32_t d, u
     return (strcmp(root->password_hash, default_hash) == 0) ? 1 : 0;
 }
 
-static int syscall_getuserflags(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getuserflags(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     session_t* session = user_get_session();
     if (!session || !session->user) return 0;
     return (int)session->user->flags;
 }
 
-static int syscall_setpassword(uint32_t user_ptr, uint32_t pass_ptr, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_setpassword(uintptr_t user_ptr, uintptr_t pass_ptr, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     const char* username = (const char*)user_ptr;
     const char* password = (const char*)pass_ptr;
@@ -384,7 +456,7 @@ static int syscall_setpassword(uint32_t user_ptr, uint32_t pass_ptr, uint32_t c,
     return result;
 }
 
-static int syscall_getunformatted(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_getunformatted(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     extern int unformatted_disk_detected;
     int val = unformatted_disk_detected;
@@ -392,40 +464,41 @@ static int syscall_getunformatted(uint32_t a, uint32_t b, uint32_t c, uint32_t d
     return val;
 }
 
-static int syscall_gethomedir(uint32_t buf_ptr, uint32_t len, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_gethomedir(uintptr_t buf_ptr, uintptr_t len, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     char* buf = (char*)buf_ptr;
-    if (!buf || len == 0) return -1;
+    size_t max_len = (size_t)len;
+    if (!buf || max_len == 0) return -1;
     
     session_t* session = user_get_session();
     if (!session || !session->user) return -1;
     
     size_t hlen = strlen(session->user->home_dir);
-    if (hlen >= len) hlen = len - 1;
+    if (hlen >= max_len) hlen = max_len - 1;
     memcpy(buf, session->user->home_dir, hlen);
     buf[hlen] = '\0';
-    return (int)hlen;
+    return (intptr_t)hlen;
 }
 
-static int syscall_vga_enable_cursor(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_enable_cursor(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_enable_cursor();
     return 0;
 }
 
-static int syscall_vga_disable_cursor(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_disable_cursor(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_disable_cursor();
     return 0;
 }
 
-static int syscall_vga_set_cursor_style(uint32_t style, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_set_cursor_style(uintptr_t style, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     vga_set_cursor_style((vga_cursor_style_t)style);
     return 0;
 }
 
-static int syscall_vga_get_pos(uint32_t row_ptr, uint32_t col_ptr, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_get_pos(uintptr_t row_ptr, uintptr_t col_ptr, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     uint8_t* row = (uint8_t*)row_ptr;
     uint8_t* col = (uint8_t*)col_ptr;
@@ -434,48 +507,48 @@ static int syscall_vga_get_pos(uint32_t row_ptr, uint32_t col_ptr, uint32_t c, u
     return 0;
 }
 
-static int syscall_vga_set_pos(uint32_t row, uint32_t col, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_set_pos(uintptr_t row, uintptr_t col, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)c; (void)d; (void)e;
     vga_set_position((uint8_t)row, (uint8_t)col);
     return 0;
 }
 
-static int syscall_vga_backspace(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_backspace(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_backspace();
     return 0;
 }
 
-static int syscall_vga_scroll_up_view(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_scroll_up_view(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_scroll_up_view();
     return 0;
 }
 
-static int syscall_vga_scroll_down(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_scroll_down(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_scroll_down();
     return 0;
 }
 
-static int syscall_vga_scroll_to_bottom(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_vga_scroll_to_bottom(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     vga_scroll_to_bottom();
     return 0;
 }
 
-static int syscall_mouse_poll(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_mouse_poll(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     mouse_poll();
     return 0;
 }
 
-static int syscall_mouse_has_data(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_mouse_has_data(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)a; (void)b; (void)c; (void)d; (void)e;
     return mouse_has_data();
 }
 
-static int syscall_mouse_get_packet(uint32_t packet_ptr, uint32_t b, uint32_t c, uint32_t d, uint32_t e) {
+static intptr_t syscall_mouse_get_packet(uintptr_t packet_ptr, uintptr_t b, uintptr_t c, uintptr_t d, uintptr_t e) {
     (void)b; (void)c; (void)d; (void)e;
     mouse_packet_t* user_packet = (mouse_packet_t*)packet_ptr;
     if (!user_packet) return -1;
@@ -547,8 +620,8 @@ void syscall_handler(void* regs_ptr) {
     arch_registers_t* regs = (arch_registers_t*)regs_ptr;
     
     // System call number in EAX, arguments in EBX, ECX, EDX, ESI, EDI
-    uint32_t syscall_num = regs->eax;
-    int result = -1;
+    uintptr_t syscall_num = (uintptr_t)regs->eax;
+    intptr_t result = -1;
 
     // Prevent scheduler-driven context switches while executing syscall code.
     process_set_preempt_disabled(1);
@@ -562,7 +635,7 @@ void syscall_handler(void* regs_ptr) {
     process_t* proc = process_get_current();
     if (proc) {
         // Check if syscall is allowed by sandbox filter
-        if (!syscall_check_allowed(syscall_num, proc->sandbox.syscall_filter)) {
+        if (!syscall_check_allowed((uint32_t)syscall_num, proc->sandbox.syscall_filter)) {
             serial_puts("Syscall blocked by sandbox: tid=");
             char pid_buf[16];
             itoa(proc->pid, pid_buf, 10);
@@ -595,12 +668,18 @@ void syscall_handler(void* regs_ptr) {
     }
     
     // Call the appropriate handler
-    syscall_handler_t handler = syscall_table[syscall_num];
-    result = handler(regs->ebx, regs->ecx, regs->edx, regs->esi, regs->edi);
+    syscall_handler_t handler = syscall_table[(size_t)syscall_num];
+    if (handler) {
+        result = handler((uintptr_t)regs->ebx,
+                         (uintptr_t)regs->ecx,
+                         (uintptr_t)regs->edx,
+                         (uintptr_t)regs->esi,
+                         (uintptr_t)regs->edi);
+    }
     
 out:
     process_set_preempt_disabled(0);
-    regs->eax = (uint32_t)result;
+    regs->eax = (uintptr_t)result;
 }
 
 // Initialize system call handler

@@ -41,8 +41,8 @@ address_space_t *kernel_address_space = 0;
 static address_space_t kernel_as_static;
 
 // Simple kernel heap allocator (before we have a proper heap)
-static uint32_t kernel_heap_ptr = 0x500000;  // Start at 5MB
-static uint32_t kernel_heap_end = 0x700000;  // End at 7MB
+static uintptr_t kernel_heap_ptr = (uintptr_t)0x500000;  // Start at 5MB
+static uintptr_t kernel_heap_end = (uintptr_t)0x700000;  // End at 7MB
 
 // Allocation statistics
 static uint32_t total_allocations = 0;
@@ -64,7 +64,7 @@ static void *slab_alloc(slab_cache_t *cache);
 static void slab_free(slab_cache_t *cache, void *ptr);
 static uint32_t calculate_checksum(void *ptr, size_t size);
 #ifdef ARCH_X86_64
-static int vmm_addr_in_vma(address_space_t *as, uint32_t addr);
+static int vmm_addr_in_vma(address_space_t *as, uintptr_t addr);
 #endif
 
 // Simple checksum calculation for integrity checking
@@ -79,7 +79,7 @@ static uint32_t calculate_checksum(void *ptr, size_t size) {
 }
 
 #ifdef ARCH_X86_64
-static int vmm_addr_in_vma(address_space_t *as, uint32_t addr) {
+static int vmm_addr_in_vma(address_space_t *as, uintptr_t addr) {
     if (!as) {
         return 0;
     }
@@ -126,7 +126,7 @@ static void *slab_alloc(slab_cache_t *cache) {
         }
         
         // Get the physical address
-        uint32_t page_addr = (uint32_t)page;
+        uintptr_t page_addr = (uintptr_t)page;
         
         // For addresses beyond identity-mapped region, we need to skip for now
         // This is a safety check - identity mapping covers 0-32MB during early boot
@@ -150,7 +150,7 @@ static void *slab_alloc(slab_cache_t *cache) {
         
         // Initialize free list from this slab
         // Use the physical address directly (identity mapped)
-        uint8_t *slab_mem = (uint8_t *)page_addr;
+        uint8_t *slab_mem = (uint8_t *)page;
         for (uint32_t i = 0; i < objects_per_slab; i++) {
             slab_obj_t *obj = (slab_obj_t *)(slab_mem + (i * obj_total_size));
             obj->magic_start = GUARD_MAGIC_START;
@@ -193,8 +193,8 @@ static void slab_free(slab_cache_t *cache, void *ptr) {
     slab_obj_t *obj = ((slab_obj_t *)ptr) - 1;
     
     // Validate object is not obviously corrupt
-    uint32_t obj_addr = (uint32_t)obj;
-    if (obj_addr < 0x100000 || obj_addr > 0x20000000) {
+    uintptr_t obj_addr = (uintptr_t)obj;
+    if (obj_addr < (uintptr_t)0x100000 || obj_addr > (uintptr_t)0x20000000) {
         serial_puts("ERROR: slab_free - object address out of valid range\n");
         return;
     }
@@ -210,7 +210,7 @@ static void slab_free(slab_cache_t *cache, void *ptr) {
     if (obj->magic_start != GUARD_MAGIC_START) {
         serial_puts("WARNING: Memory corruption - start guard invalid at 0x");
         char buf[16];
-        itoa((uint32_t)ptr, buf, 16);
+        itoa((uint32_t)(uintptr_t)ptr, buf, 16);
         serial_puts(buf);
         serial_puts(" Expected: 0xDEADBEEF, Got: 0x");
         itoa(obj->magic_start, buf, 16);
@@ -234,7 +234,7 @@ static void slab_free(slab_cache_t *cache, void *ptr) {
     if (*end_guard != GUARD_MAGIC_END) {
         serial_puts("WARNING: Buffer corruption - end guard invalid at 0x");
         char buf[16];
-        itoa((uint32_t)ptr, buf, 16);
+        itoa((uint32_t)(uintptr_t)ptr, buf, 16);
         serial_puts(buf);
         serial_puts(" Expected: 0xBEEFDEAD, Got: 0x");
         itoa(*end_guard, buf, 16);
@@ -249,7 +249,7 @@ static void slab_free(slab_cache_t *cache, void *ptr) {
     if (obj->checksum != expected_checksum) {
         serial_puts("WARNING: Memory corruption - checksum mismatch at 0x");
         char buf[16];
-        itoa((uint32_t)ptr, buf, 16);
+        itoa((uint32_t)(uintptr_t)ptr, buf, 16);
         serial_puts(buf);
         serial_puts(" - metadata may be corrupted\n");
         // Continue anyway - checksum might have been updated
@@ -312,16 +312,18 @@ address_space_t *create_address_space(void) {
     
     // Copy kernel mappings (both identity and higher half) to new directory
     // Identity mapped kernel (0-32MB for early boot safety)
-    for (uint32_t addr = 0; addr < 0x2000000; addr += PAGE_SIZE) {
-        uint32_t phys = get_physical_address(kernel_directory, addr);
+    for (uintptr_t addr = 0; addr < (uintptr_t)0x2000000; addr += PAGE_SIZE) {
+        uintptr_t phys = get_physical_address(kernel_directory, addr);
         if (phys != 0) {
             map_page(as->page_dir, addr, phys, PAGE_PRESENT | PAGE_WRITE);
         }
     }
     
     // Higher half kernel mappings
-    for (uint32_t addr = KERNEL_VIRTUAL_BASE; addr < KERNEL_VIRTUAL_BASE + 0x400000; addr += PAGE_SIZE) {
-        uint32_t phys = get_physical_address(kernel_directory, addr);
+    for (uintptr_t addr = (uintptr_t)KERNEL_VIRTUAL_BASE;
+         addr < (uintptr_t)KERNEL_VIRTUAL_BASE + (uintptr_t)0x400000;
+         addr += PAGE_SIZE) {
+        uintptr_t phys = get_physical_address(kernel_directory, addr);
         if (phys != 0) {
             map_page(as->page_dir, addr, phys, PAGE_PRESENT | PAGE_WRITE);
         }
@@ -367,7 +369,7 @@ void switch_address_space(address_space_t *as) {
     switch_page_directory(as->page_dir);
 }
 
-void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pages, uint32_t flags) {
+void *vmm_alloc_pages(address_space_t *as, uintptr_t virtual_addr, size_t num_pages, uint32_t flags) {
     if (!as) return 0;
     
     // Check for integer overflow in size calculation
@@ -380,7 +382,7 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
     
     // Allocate physical pages and map them
     for (size_t i = 0; i < num_pages; i++) {
-        uint32_t vaddr = virtual_addr + (i * PAGE_SIZE);
+        uintptr_t vaddr = virtual_addr + (i * PAGE_SIZE);
         
         // Check if already mapped
         if (is_page_present(as->page_dir, vaddr)) {
@@ -393,8 +395,8 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
             if (vmm_addr_in_vma(as, vaddr)) {
                 // Unmap what we've allocated so far
                 for (size_t j = 0; j < i; j++) {
-                    uint32_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
-                    uint32_t phys = get_physical_address(as->page_dir, unmap_addr);
+                    uintptr_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
+                    uintptr_t phys = get_physical_address(as->page_dir, unmap_addr);
                     unmap_page(as->page_dir, unmap_addr);
                     if (phys) free_page((void *)phys);
                 }
@@ -403,8 +405,8 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
 #else
             // Unmap what we've allocated so far
             for (size_t j = 0; j < i; j++) {
-                uint32_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
-                uint32_t phys = get_physical_address(as->page_dir, unmap_addr);
+                uintptr_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
+                uintptr_t phys = get_physical_address(as->page_dir, unmap_addr);
                 unmap_page(as->page_dir, unmap_addr);
                 if (phys) free_page((void *)phys);
             }
@@ -417,8 +419,8 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
         if (!phys_page) {
             // Clean up on failure
             for (size_t j = 0; j < i; j++) {
-                uint32_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
-                uint32_t phys = get_physical_address(as->page_dir, unmap_addr);
+                uintptr_t unmap_addr = virtual_addr + (j * PAGE_SIZE);
+                uintptr_t phys = get_physical_address(as->page_dir, unmap_addr);
                 unmap_page(as->page_dir, unmap_addr);
                 if (phys) free_page((void *)phys);
             }
@@ -426,7 +428,7 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
         }
         
         // Map the page
-        map_page(as->page_dir, vaddr, (uint32_t)phys_page, flags);
+        map_page(as->page_dir, vaddr, (uintptr_t)phys_page, flags);
         
         // Clear the page if it's writable
         if (flags & PAGE_WRITE) {
@@ -448,7 +450,7 @@ void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pag
     return (void *)virtual_addr;
 }
 
-void *vmm_alloc_at(address_space_t *as, uint32_t virtual_addr, size_t size, uint32_t flags) {
+void *vmm_alloc_at(address_space_t *as, uintptr_t virtual_addr, size_t size, uint32_t flags) {
     size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     return vmm_alloc_pages(as, virtual_addr, num_pages, flags);
 }
@@ -459,16 +461,16 @@ void *vmm_alloc_anywhere(address_space_t *as, size_t size, uint32_t flags) {
     size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     
     // Find free virtual address space
-    uint32_t start_addr = (flags & PAGE_USER) ? VMM_USER_HEAP_START : VMM_KERNEL_HEAP_START;
-    uint32_t end_addr = (flags & PAGE_USER) ? KERNEL_VIRTUAL_BASE : 0xFFFFFFFF;
+    uintptr_t start_addr = (flags & PAGE_USER) ? VMM_USER_HEAP_START : VMM_KERNEL_HEAP_START;
+    uintptr_t end_addr = (flags & PAGE_USER) ? (uintptr_t)KERNEL_VIRTUAL_BASE : UINTPTR_MAX;
     
     // Simple linear search for free space
-    for (uint32_t addr = start_addr; addr < end_addr - (num_pages * PAGE_SIZE); addr += PAGE_SIZE) {
+    for (uintptr_t addr = start_addr; addr < end_addr - (num_pages * PAGE_SIZE); addr += PAGE_SIZE) {
         int free_space = 1;
         
         // Check if this range is free
         for (size_t i = 0; i < num_pages; i++) {
-            uint32_t check_addr = addr + (i * PAGE_SIZE);
+            uintptr_t check_addr = addr + (i * PAGE_SIZE);
             if (is_page_present(as->page_dir, check_addr)) {
 #ifdef ARCH_X86_64
                 /*
@@ -495,15 +497,15 @@ void *vmm_alloc_anywhere(address_space_t *as, size_t size, uint32_t flags) {
     return 0; // No free space found
 }
 
-void vmm_free_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pages) {
+void vmm_free_pages(address_space_t *as, uintptr_t virtual_addr, size_t num_pages) {
     if (!as) return;
     
     virtual_addr = PAGE_ALIGN_DOWN(virtual_addr);
     
     // Unmap and free physical pages
     for (size_t i = 0; i < num_pages; i++) {
-        uint32_t vaddr = virtual_addr + (i * PAGE_SIZE);
-        uint32_t phys = get_physical_address(as->page_dir, vaddr);
+        uintptr_t vaddr = virtual_addr + (i * PAGE_SIZE);
+        uintptr_t phys = get_physical_address(as->page_dir, vaddr);
         
         if (phys) {
             unmap_page(as->page_dir, vaddr);
@@ -658,8 +660,8 @@ void *kmalloc_aligned(size_t size, size_t alignment) {
     if (!ptr) return NULL;
     
     // Calculate aligned address
-    uint32_t addr = (uint32_t)ptr;
-    uint32_t aligned_addr = (addr + alignment - 1) & ~(alignment - 1);
+    uintptr_t addr = (uintptr_t)ptr;
+    uintptr_t aligned_addr = (addr + alignment - 1) & ~(alignment - 1);
     
     // If already aligned, return as-is
     if (aligned_addr == addr) {
@@ -674,16 +676,16 @@ void *kmalloc_aligned(size_t size, size_t alignment) {
 void kfree(void *ptr) {
     if (!ptr) return;
     
-    uint32_t addr = (uint32_t)ptr;
+    uintptr_t addr = (uintptr_t)ptr;
     
     // Validate pointer is not obviously corrupt (not in kernel code/data area)
-    if (addr < 0x100000) {
+    if (addr < (uintptr_t)0x100000) {
         serial_puts("ERROR: kfree - invalid pointer (too low)\n");
         return;
     }
     
     // Check if pointer is in early bump allocator range
-    if (addr >= 0x500000 && addr < 0x700000) {
+    if (addr >= (uintptr_t)0x500000 && addr < (uintptr_t)0x700000) {
         // Validate alignment
         if (addr % 4 != 0) {
             serial_puts("WARNING: kfree - misaligned pointer in bump allocator region\n");
@@ -693,7 +695,7 @@ void kfree(void *ptr) {
         uint32_t *start_guard = (uint32_t *)(addr - sizeof(uint32_t));
         
         // Additional validation for guard location
-        if ((uint32_t)start_guard < 0x500000) {
+        if ((uintptr_t)start_guard < (uintptr_t)0x500000) {
             serial_puts("ERROR: kfree - guard outside bump allocator range\n");
             return;
         }
@@ -721,7 +723,7 @@ void kfree(void *ptr) {
     // For VMM-allocated memory, search for the VMA and free it
     if (kernel_address_space && kernel_address_space->vma_list) {
         // Align down to page boundary
-        uint32_t page_addr = PAGE_ALIGN_DOWN(addr);
+        uintptr_t page_addr = PAGE_ALIGN_DOWN(addr);
         
         // Find the VMA that contains this address
         vma_t *vma = kernel_address_space->vma_list;
@@ -758,7 +760,7 @@ void kfree(void *ptr) {
         slab_obj_t *obj = ((slab_obj_t *)ptr) - 1;
         
         // Validate header is accessible
-        if ((uint32_t)obj < 0x100000) {
+        if ((uintptr_t)obj < (uintptr_t)0x100000) {
             serial_puts("ERROR: kfree - slab header pointer invalid\n");
             return;
         }
@@ -811,7 +813,7 @@ void kfree(void *ptr) {
     serial_puts("\n");
 }
 
-int vmm_map_physical(address_space_t *as, uint32_t virtual_addr, uint32_t physical_addr, size_t size, uint32_t flags) {
+int vmm_map_physical(address_space_t *as, uintptr_t virtual_addr, uintptr_t physical_addr, size_t size, uint32_t flags) {
     if (!as) return -1;
     
     virtual_addr = PAGE_ALIGN_DOWN(virtual_addr);
@@ -819,8 +821,8 @@ int vmm_map_physical(address_space_t *as, uint32_t virtual_addr, uint32_t physic
     size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     
     for (size_t i = 0; i < num_pages; i++) {
-        uint32_t vaddr = virtual_addr + (i * PAGE_SIZE);
-        uint32_t paddr = physical_addr + (i * PAGE_SIZE);
+        uintptr_t vaddr = virtual_addr + (i * PAGE_SIZE);
+        uintptr_t paddr = physical_addr + (i * PAGE_SIZE);
         
         map_page(as->page_dir, vaddr, paddr, flags);
     }
@@ -828,26 +830,26 @@ int vmm_map_physical(address_space_t *as, uint32_t virtual_addr, uint32_t physic
     return 0;
 }
 
-int vmm_unmap(address_space_t *as, uint32_t virtual_addr, size_t size) {
+int vmm_unmap(address_space_t *as, uintptr_t virtual_addr, size_t size) {
     if (!as) return -1;
     
     virtual_addr = PAGE_ALIGN_DOWN(virtual_addr);
     size_t num_pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
     
     for (size_t i = 0; i < num_pages; i++) {
-        uint32_t vaddr = virtual_addr + (i * PAGE_SIZE);
+        uintptr_t vaddr = virtual_addr + (i * PAGE_SIZE);
         unmap_page(as->page_dir, vaddr);
     }
     
     return 0;
 }
 
-int vmm_is_mapped(address_space_t *as, uint32_t virtual_addr) {
+int vmm_is_mapped(address_space_t *as, uintptr_t virtual_addr) {
     if (!as) return 0;
     return is_page_present(as->page_dir, virtual_addr);
 }
 
-uint32_t vmm_virt_to_phys(address_space_t *as, uint32_t virtual_addr) {
+uintptr_t vmm_virt_to_phys(address_space_t *as, uintptr_t virtual_addr) {
     if (!as) return 0;
     return get_physical_address(as->page_dir, virtual_addr);
 }
@@ -882,15 +884,15 @@ void vmm_print_stats(address_space_t *as) {
 int vmm_validate_pointer(void *ptr) {
     if (!ptr) return 0;
     
-    uint32_t addr = (uint32_t)ptr;
+    uintptr_t addr = (uintptr_t)ptr;
     
     // Check if in valid kernel memory range
-    if (addr < 0x1000) {
+    if (addr < (uintptr_t)0x1000) {
         return 0; // NULL pointer range
     }
     
     // Check if in kernel heap range (identity-mapped region up to 32MB)
-    if (addr >= 0x500000 && addr < 0x2000000) {
+    if (addr >= (uintptr_t)0x500000 && addr < (uintptr_t)0x2000000) {
         return 1; // Valid identity-mapped range
     }
     
@@ -905,15 +907,15 @@ int vmm_validate_pointer(void *ptr) {
 int vmm_check_guards(void *ptr) {
     if (!ptr) return 0;
     
-    uint32_t addr = (uint32_t)ptr;
+    uintptr_t addr = (uintptr_t)ptr;
     
     // Check bump allocator guards
-    if (addr >= 0x500000 && addr < 0x700000) {
+    if (addr >= (uintptr_t)0x500000 && addr < (uintptr_t)0x700000) {
         uint32_t *start_guard = (uint32_t *)(addr - sizeof(uint32_t));
         if (*start_guard != GUARD_MAGIC_START) {
             serial_puts("ERROR: Start guard corrupted at 0x");
             char buf[16];
-            itoa(addr, buf, 16);
+            itoa((uint32_t)addr, buf, 16);
             serial_puts(buf);
             serial_puts("\n");
             return 0;
@@ -928,7 +930,7 @@ int vmm_check_guards(void *ptr) {
         if (*end_guard != GUARD_MAGIC_END) {
             serial_puts("ERROR: End guard corrupted at 0x");
             char buf[16];
-            itoa(addr, buf, 16);
+            itoa((uint32_t)addr, buf, 16);
             serial_puts(buf);
             serial_puts("\n");
             return 0;
@@ -939,7 +941,7 @@ int vmm_check_guards(void *ptr) {
         if (obj->checksum != expected) {
             serial_puts("ERROR: Checksum mismatch at 0x");
             char buf[16];
-            itoa(addr, buf, 16);
+            itoa((uint32_t)addr, buf, 16);
             serial_puts(buf);
             serial_puts("\n");
             return 0;
@@ -1053,9 +1055,9 @@ void vmm_print_detailed_stats(void) {
     vga_puts(buf);
     vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     
-    uint32_t heap_used = kernel_heap_ptr - 0x500000;
-    uint32_t heap_total = kernel_heap_end - 0x500000;
-    uint32_t heap_pct = heap_used * 100 / heap_total;
+    uintptr_t heap_used = kernel_heap_ptr - (uintptr_t)0x500000;
+    uintptr_t heap_total = kernel_heap_end - (uintptr_t)0x500000;
+    uint32_t heap_pct = (heap_total != 0) ? (uint32_t)((heap_used * 100) / heap_total) : 0;
     
     vga_puts(" (");
     if (heap_pct > 90) {
@@ -1142,19 +1144,19 @@ int vmm_validate_allocation(void *ptr) {
         return 0; // NULL is technically valid
     }
     
-    uint32_t addr = (uint32_t)ptr;
+    uintptr_t addr = (uintptr_t)ptr;
     
     // Basic range check
-    if (addr < 0x100000 || addr > 0x20000000) {
+    if (addr < (uintptr_t)0x100000 || addr > (uintptr_t)0x20000000) {
         serial_puts("ERROR: Pointer outside valid memory range\n");
         return 0;
     }
     
     // Check if it's a slab allocation
     slab_obj_t *obj = ((slab_obj_t *)ptr) - 1;
-    uint32_t obj_addr = (uint32_t)obj;
+    uintptr_t obj_addr = (uintptr_t)obj;
     
-    if (obj_addr >= 0x100000 && obj_addr < 0x20000000) {
+    if (obj_addr >= (uintptr_t)0x100000 && obj_addr < (uintptr_t)0x20000000) {
         // Check if this looks like a slab object
         if (obj->magic_start == GUARD_MAGIC_START) {
             // Validate size
@@ -1185,9 +1187,9 @@ int vmm_validate_allocation(void *ptr) {
     }
     
     // Check bump allocator range
-    if (addr >= 0x500000 && addr < 0x700000) {
+    if (addr >= (uintptr_t)0x500000 && addr < (uintptr_t)0x700000) {
         uint32_t *start_guard = (uint32_t *)(addr - sizeof(uint32_t));
-        if ((uint32_t)start_guard >= 0x500000) {
+        if ((uintptr_t)start_guard >= (uintptr_t)0x500000) {
             if (*start_guard == GUARD_MAGIC_START) {
                 return 1; // Valid bump allocation
             } else if (*start_guard == GUARD_MAGIC_FREED) {
@@ -1213,7 +1215,7 @@ int vmm_scan_region_for_corruption(void *start, size_t size) {
     
     serial_puts("VMM: Scanning memory region 0x");
     char buf[16];
-    itoa((uint32_t)start, buf, 16);
+    itoa((uint32_t)(uintptr_t)start, buf, 16);
     serial_puts(buf);
     serial_puts(" size ");
     itoa(size, buf, 10);
@@ -1227,18 +1229,18 @@ int vmm_scan_region_for_corruption(void *start, size_t size) {
         // Look for corrupted guards
         if (*word == GUARD_MAGIC_START || *word == GUARD_MAGIC_END) {
             // Check if this is a legitimate guard by validating nearby structure
-            uint32_t offset = (uint32_t)p - (uint32_t)start;
+            uintptr_t offset = (uintptr_t)p - (uintptr_t)start;
             serial_puts("  Found guard pattern at offset ");
-            itoa(offset, buf, 10);
+            itoa((uint32_t)offset, buf, 10);
             serial_puts(buf);
             serial_puts("\n");
         }
         
         // Look for freed memory pattern
         if ((*word & 0xFFFFFF00) == 0xFEFEFE00) {
-            uint32_t offset = (uint32_t)p - (uint32_t)start;
+            uintptr_t offset = (uintptr_t)p - (uintptr_t)start;
             serial_puts("  Found freed memory pattern at offset ");
-            itoa(offset, buf, 10);
+            itoa((uint32_t)offset, buf, 10);
             serial_puts(buf);
             serial_puts("\n");
             issues++;
@@ -1255,12 +1257,12 @@ int vmm_check_heap_consistency(void) {
     int errors = 0;
     
     // Validate heap pointers
-    if (kernel_heap_ptr < 0x500000 || kernel_heap_ptr > kernel_heap_end) {
+    if (kernel_heap_ptr < (uintptr_t)0x500000 || kernel_heap_ptr > kernel_heap_end) {
         serial_puts("ERROR: Kernel heap pointer out of range\n");
         errors++;
     }
     
-    if (kernel_heap_end < kernel_heap_ptr || kernel_heap_end > 0x700000) {
+    if (kernel_heap_end < kernel_heap_ptr || kernel_heap_end > (uintptr_t)0x700000) {
         serial_puts("ERROR: Kernel heap end pointer invalid\n");
         errors++;
     }

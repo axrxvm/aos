@@ -135,8 +135,12 @@ void init_process_manager(void) {
     idle_process->state = PROCESS_READY;
     idle_process->parent_pid = 0;
     idle_process->address_space = kernel_address_space;
-    idle_process->context.eip = (uint32_t)idle_task;
-    idle_process->context.esp = (uint32_t)kmalloc(4096) + 4096;  // 4KB kernel stack
+    void* idle_stack = kmalloc(4096);
+    if (!idle_stack) {
+        panic("Failed to allocate idle stack");
+    }
+    idle_process->context.eip = (uintptr_t)idle_task;
+    idle_process->context.esp = (uintptr_t)idle_stack + 4096;  // 4KB kernel stack
     idle_process->context.ebp = idle_process->context.esp;
     idle_process->context.eflags = 0x202;  // IF flag set
 #ifdef ARCH_HAS_SEGMENTATION
@@ -364,7 +368,14 @@ pid_t process_create(const char* name, void (*entry_point)(void), int priority) 
     }
     
     // Allocate kernel stack
-    proc->kernel_stack = (uint32_t)kmalloc(8192) + 8192;  // 8KB kernel stack
+    void* kernel_stack_mem = kmalloc(8192);
+    if (!kernel_stack_mem) {
+        destroy_address_space(proc->address_space);
+        proc->address_space = NULL;
+        proc->state = PROCESS_DEAD;
+        return -1;
+    }
+    proc->kernel_stack = (uintptr_t)kernel_stack_mem + 8192;  // 8KB kernel stack
     
     // Allocate user stack
     proc->user_stack = VMM_USER_STACK_TOP;
@@ -372,7 +383,7 @@ pid_t process_create(const char* name, void (*entry_point)(void), int priority) 
                  VMM_PRESENT | VMM_WRITE | VMM_USER);
     
     // Initialize context
-    proc->context.eip = (uint32_t)entry_point;
+    proc->context.eip = (uintptr_t)entry_point;
     proc->context.esp = proc->user_stack;
     proc->context.ebp = proc->user_stack;
     proc->context.eflags = 0x202;  // IF flag set
@@ -384,7 +395,7 @@ pid_t process_create(const char* name, void (*entry_point)(void), int priority) 
     proc->context.gs = arch_get_user_data_segment() | 0x3;
     proc->context.ss = arch_get_user_data_segment() | 0x3;
 #endif
-    proc->context.cr3 = proc->address_space->page_dir->physical_addr;
+    proc->context.cr3 = (uintptr_t)proc->address_space->page_dir->physical_addr;
     
     // Initialize sandbox (inherit from parent or use default)
     if (current_process && current_process->sandbox.cage_level != CAGE_NONE) {
@@ -576,24 +587,27 @@ void* process_sbrk(int increment) {
     }
     
     address_space_t* as = current_process->address_space;
-    uint32_t old_heap = as->heap_end;
+    uintptr_t old_heap = as->heap_end;
     
     if (increment > 0) {
         // Expand heap
-        uint32_t new_heap = old_heap + increment;
-        if (vmm_alloc_at(as, old_heap, increment, VMM_PRESENT | VMM_WRITE | VMM_USER)) {
+        uintptr_t new_heap = old_heap + (uintptr_t)increment;
+        if (new_heap < old_heap) {
+            return (void*)-1;
+        }
+        if (vmm_alloc_at(as, old_heap, (size_t)increment, VMM_PRESENT | VMM_WRITE | VMM_USER)) {
             as->heap_end = new_heap;
             return (void*)old_heap;
         }
         return (void*)-1;
     } else if (increment < 0) {
         // Shrink heap
-        uint32_t shrink = -increment;
+        uintptr_t shrink = (uintptr_t)(-increment);
         if (shrink > (old_heap - as->heap_start)) {
             return (void*)-1;  // Can't shrink below start
         }
         as->heap_end -= shrink;
-        vmm_free_pages(as, as->heap_end, shrink / 4096);
+        vmm_free_pages(as, as->heap_end, (size_t)(shrink / PAGE_SIZE));
         return (void*)as->heap_end;
     }
     
@@ -635,12 +649,19 @@ int process_fork(void) {
     // TODO: Implement proper memory copying
     
     // Allocate kernel stack
-    child->kernel_stack = (uint32_t)kmalloc(8192) + 8192;
+    void* child_kernel_stack_mem = kmalloc(8192);
+    if (!child_kernel_stack_mem) {
+        destroy_address_space(child->address_space);
+        child->address_space = NULL;
+        child->state = PROCESS_DEAD;
+        return -1;
+    }
+    child->kernel_stack = (uintptr_t)child_kernel_stack_mem + 8192;
     
     // Copy context (child returns 0, parent returns child PID)
     memcpy(&child->context, &current_process->context, sizeof(cpu_context_t));
     child->context.eax = 0;  // Child returns 0 from fork
-    child->context.cr3 = child->address_space->page_dir->physical_addr;
+    child->context.cr3 = (uintptr_t)child->address_space->page_dir->physical_addr;
     
     // Add to parent's children list
     child->sibling = current_process->children;
@@ -797,7 +818,7 @@ int process_execve(const char* path, char* const argv[], char* const envp[]) {
     }
     
     // Load ELF binary
-    uint32_t entry_point;
+    uintptr_t entry_point;
     if (elf_load(path, &entry_point) != 0) {
         serial_puts("EXEC: Failed to load ELF\n");
         process_exit(-1);
@@ -815,8 +836,8 @@ int process_execve(const char* path, char* const argv[], char* const envp[]) {
     
     // Enter ring 3 and execute the program
     // This function does not return
-    extern void enter_usermode(uint32_t entry_point, uint32_t user_stack, int argc, char** argv);
-    enter_usermode(entry_point, current_process->user_stack, argc, argv);
+    extern void enter_usermode(uintptr_t entry_point, uintptr_t user_stack, int argc, char** argv);
+    enter_usermode(entry_point, current_process->user_stack, argc, (char**)argv);
     
     // Never reached
     return 0;

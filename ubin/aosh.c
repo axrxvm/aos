@@ -14,6 +14,8 @@
  * Compiled as a standalone flat binary at 0x08048000.
  */
 
+#include <stdint.h>
+
  /* SYSCALL NUMBERS
  * (must match kernel include/syscall.h)
  */
@@ -85,8 +87,8 @@ typedef struct {
  * SYSCALL WRAPPERS
 */
 
-static inline int syscall0(int num) {
-    int ret;
+static inline intptr_t syscall0(intptr_t num) {
+    intptr_t ret;
     __asm__ volatile (
         "int $0x80"
         : "=a"(ret)
@@ -96,8 +98,8 @@ static inline int syscall0(int num) {
     return ret;
 }
 
-static inline int syscall1(int num, int arg1) {
-    int ret;
+static inline intptr_t syscall1(intptr_t num, intptr_t arg1) {
+    intptr_t ret;
     __asm__ volatile (
         "int $0x80"
         : "=a"(ret)
@@ -107,8 +109,8 @@ static inline int syscall1(int num, int arg1) {
     return ret;
 }
 
-static inline int syscall2(int num, int arg1, int arg2) {
-    int ret;
+static inline intptr_t syscall2(intptr_t num, intptr_t arg1, intptr_t arg2) {
+    intptr_t ret;
     __asm__ volatile (
         "int $0x80"
         : "=a"(ret)
@@ -118,8 +120,8 @@ static inline int syscall2(int num, int arg1, int arg2) {
     return ret;
 }
 
-static inline int syscall3(int num, int arg1, int arg2, int arg3) {
-    int ret;
+static inline intptr_t syscall3(intptr_t num, intptr_t arg1, intptr_t arg2, intptr_t arg3) {
+    intptr_t ret;
     __asm__ volatile (
         "int $0x80"
         : "=a"(ret)
@@ -147,11 +149,11 @@ static int u_getchar(void) {
 }
 
 static int u_kcmd(const char* cmd) {
-    return syscall1(SYS_KCMD, (int)cmd);
+    return (int)syscall1(SYS_KCMD, (intptr_t)(uintptr_t)cmd);
 }
 
 static int u_getcwd(char* buf, int len) {
-    return syscall2(SYS_GETCWD, (int)buf, len);
+    return (int)syscall2(SYS_GETCWD, (intptr_t)(uintptr_t)buf, len);
 }
 
 static void u_setcolor(int color) {
@@ -163,7 +165,7 @@ static void u_clear(void) {
 }
 
 static int u_getuser(char* buf, int len) {
-    return syscall2(SYS_GETUSER, (int)buf, len);
+    return (int)syscall2(SYS_GETUSER, (intptr_t)(uintptr_t)buf, len);
 }
 
 static int u_isroot(void) {
@@ -171,7 +173,7 @@ static int u_isroot(void) {
 }
 
 static int u_login(const char* user, const char* pass) {
-    return syscall2(SYS_LOGIN, (int)user, (int)pass);
+    return (int)syscall2(SYS_LOGIN, (intptr_t)(uintptr_t)user, (intptr_t)(uintptr_t)pass);
 }
 
 static void u_logout(void) {
@@ -179,7 +181,7 @@ static void u_logout(void) {
 }
 
 static int u_getversion(char* buf, int len) {
-    return syscall2(SYS_GETVERSION, (int)buf, len);
+    return (int)syscall2(SYS_GETVERSION, (intptr_t)(uintptr_t)buf, len);
 }
 
 static int u_isfirsttime(void) {
@@ -191,7 +193,7 @@ static int u_getuserflags(void) {
 }
 
 static int u_setpassword(const char* user, const char* pass) {
-    return syscall2(SYS_SETPASSWORD, (int)user, (int)pass);
+    return (int)syscall2(SYS_SETPASSWORD, (intptr_t)(uintptr_t)user, (intptr_t)(uintptr_t)pass);
 }
 
 static int u_getunformatted(void) {
@@ -199,7 +201,7 @@ static int u_getunformatted(void) {
 }
 
 static int u_gethomedir(char* buf, int len) {
-    return syscall2(SYS_GETHOMEDIR, (int)buf, len);
+    return (int)syscall2(SYS_GETHOMEDIR, (intptr_t)(uintptr_t)buf, len);
 }
 
 static void u_vga_enable_cursor(void) {
@@ -215,7 +217,7 @@ static void u_vga_set_cursor_style(int style) {
 }
 
 static void u_vga_get_pos(unsigned char* row, unsigned char* col) {
-    syscall2(SYS_VGA_GET_POS, (int)row, (int)col);
+    syscall2(SYS_VGA_GET_POS, (intptr_t)(uintptr_t)row, (intptr_t)(uintptr_t)col);
 }
 
 static void u_vga_set_pos(unsigned char row, unsigned char col) {
@@ -247,11 +249,11 @@ static int u_mouse_has_data(void) {
 }
 
 static int u_mouse_get_packet(mouse_packet_t* packet) {
-    return syscall1(SYS_MOUSE_GET_PACKET, (int)packet);
+    return (int)syscall1(SYS_MOUSE_GET_PACKET, (intptr_t)(uintptr_t)packet);
 }
 /* File operations */
 static int u_open(const char* path, int flags) {
-    return (int)syscall2(SYS_OPEN, (int)path, flags);
+    return (int)syscall2(SYS_OPEN, (intptr_t)(uintptr_t)path, flags);
 }
 
 static int u_close(int fd) {
@@ -259,11 +261,11 @@ static int u_close(int fd) {
 }
 
 static int u_read(int fd, void* buf, int size) {
-    return (int)syscall3(SYS_READ, fd, (int)buf, size);
+    return (int)syscall3(SYS_READ, fd, (intptr_t)(uintptr_t)buf, size);
 }
 
 static int u_write(int fd, const void* buf, int size) {
-    return (int)syscall3(SYS_WRITE, fd, (int)buf, size);
+    return (int)syscall3(SYS_WRITE, fd, (intptr_t)(uintptr_t)buf, size);
 }
 /*
  * STRING UTILITIES

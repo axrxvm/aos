@@ -21,7 +21,7 @@
  * @param argc Argument count for main()
  * @param argv Argument vector for main()
  */
-void enter_usermode(uint32_t entry_point, uint32_t user_stack, int argc, char** argv) __attribute__((noreturn));
+void enter_usermode(uintptr_t entry_point, uintptr_t user_stack, int argc, char** argv) __attribute__((noreturn));
 
 /**
  * Switch from ring 3 to ring 0 (handled by trap/syscall mechanism)

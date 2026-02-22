@@ -75,35 +75,35 @@ static uint32_t convert_flags_to_i386(uint32_t arch_flags) {
 }
 
 // Map a virtual address to a physical address
-bool arch_paging_map(arch_page_directory_t* dir, uint32_t virt, uint32_t phys, uint32_t flags) {
+bool arch_paging_map(arch_page_directory_t* dir, uintptr_t virt, uintptr_t phys, uint32_t flags) {
     if (!dir || !dir->i386_dir) return false;
     
     uint32_t i386_flags = convert_flags_to_i386(flags);
-    map_page(dir->i386_dir, virt, phys, i386_flags);
+    map_page(dir->i386_dir, (uint32_t)virt, (uint32_t)phys, i386_flags);
     return true;
 }
 
 // Unmap a virtual address
-bool arch_paging_unmap(arch_page_directory_t* dir, uint32_t virt) {
+bool arch_paging_unmap(arch_page_directory_t* dir, uintptr_t virt) {
     if (!dir || !dir->i386_dir) return false;
     
-    unmap_page(dir->i386_dir, virt);
+    unmap_page(dir->i386_dir, (uint32_t)virt);
     return true;
 }
 
 // Get physical address from virtual address
-uint32_t arch_paging_get_physical(arch_page_directory_t* dir, uint32_t virt) {
+uintptr_t arch_paging_get_physical(arch_page_directory_t* dir, uintptr_t virt) {
     if (!dir || !dir->i386_dir) return 0;
     
-    return get_physical_address(dir->i386_dir, virt);
+    return (uintptr_t)get_physical_address(dir->i386_dir, (uint32_t)virt);
 }
 
 // Identity map a range
-bool arch_paging_identity_map_range(arch_page_directory_t* dir, uint32_t start, uint32_t end, uint32_t flags) {
+bool arch_paging_identity_map_range(arch_page_directory_t* dir, uintptr_t start, uintptr_t end, uint32_t flags) {
     if (!dir || !dir->i386_dir) return false;
     
     uint32_t i386_flags = convert_flags_to_i386(flags);
-    identity_map_range(dir->i386_dir, start, end, i386_flags);
+    identity_map_range(dir->i386_dir, (uint32_t)start, (uint32_t)end, i386_flags);
     return true;
 }
 

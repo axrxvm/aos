@@ -11,6 +11,7 @@
 #ifndef ELF_H
 #define ELF_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 // ELF Magic number
@@ -57,6 +58,13 @@
 #define SHT_SHLIB       10 // Reserved
 #define SHT_DYNSYM      11 // Dynamic linker symbol table
 
+// ELF class values
+#define ELF_CLASS_32    1
+#define ELF_CLASS_64    2
+
+// ELF data encoding
+#define ELF_DATA_LSB    1
+
 // ELF32 Header
 typedef struct {
     uint8_t  e_ident[16];   // Magic number and other info
@@ -101,9 +109,39 @@ typedef struct {
     uint32_t sh_entsize;    // Entry size if section holds table
 } elf32_section_header_t;
 
+// ELF64 Header
+typedef struct {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} elf64_header_t;
+
+// ELF64 Program Header
+typedef struct {
+    uint32_t p_type;
+    uint32_t p_flags;
+    uint64_t p_offset;
+    uint64_t p_vaddr;
+    uint64_t p_paddr;
+    uint64_t p_filesz;
+    uint64_t p_memsz;
+    uint64_t p_align;
+} elf64_program_header_t;
+
 // ELF loading functions
 int elf_validate(const void* elf_data);
-int elf_load(const char* path, uint32_t* entry_point);
-int elf_load_from_memory(const void* elf_data, uint32_t size, uint32_t* entry_point);
+int elf_load(const char* path, uintptr_t* entry_point);
+int elf_load_from_memory(const void* elf_data, size_t size, uintptr_t* entry_point);
 
 #endif // ELF_H

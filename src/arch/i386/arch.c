@@ -83,8 +83,8 @@ uint32_t arch_get_user_data_segment(void) {
     return USER_DATA_SEGMENT;
 }
 
-void arch_set_kernel_stack(uint32_t stack) {
-    set_kernel_stack(stack);
+void arch_set_kernel_stack(uintptr_t stack) {
+    set_kernel_stack((uint32_t)stack);
 }
 
 // Timer initialization

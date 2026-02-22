@@ -64,7 +64,7 @@ static uint32_t convert_flags_to_x86(uint32_t arch_flags) {
     return x86_flags;
 }
 
-bool arch_paging_map(arch_page_directory_t* dir, uint32_t virt, uint32_t phys, uint32_t flags) {
+bool arch_paging_map(arch_page_directory_t* dir, uintptr_t virt, uintptr_t phys, uint32_t flags) {
     if (!dir || !dir->x86_64_dir) return false;
 
     uint32_t x86_flags = convert_flags_to_x86(flags);
@@ -72,20 +72,20 @@ bool arch_paging_map(arch_page_directory_t* dir, uint32_t virt, uint32_t phys, u
     return true;
 }
 
-bool arch_paging_unmap(arch_page_directory_t* dir, uint32_t virt) {
+bool arch_paging_unmap(arch_page_directory_t* dir, uintptr_t virt) {
     if (!dir || !dir->x86_64_dir) return false;
 
     unmap_page(dir->x86_64_dir, virt);
     return true;
 }
 
-uint32_t arch_paging_get_physical(arch_page_directory_t* dir, uint32_t virt) {
+uintptr_t arch_paging_get_physical(arch_page_directory_t* dir, uintptr_t virt) {
     if (!dir || !dir->x86_64_dir) return 0;
 
     return get_physical_address(dir->x86_64_dir, virt);
 }
 
-bool arch_paging_identity_map_range(arch_page_directory_t* dir, uint32_t start, uint32_t end, uint32_t flags) {
+bool arch_paging_identity_map_range(arch_page_directory_t* dir, uintptr_t start, uintptr_t end, uint32_t flags) {
     if (!dir || !dir->x86_64_dir) return false;
 
     uint32_t x86_flags = convert_flags_to_x86(flags);

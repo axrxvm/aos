@@ -39,16 +39,16 @@ void arch_paging_switch_directory(arch_page_directory_t* dir);  // Switch to a p
 arch_page_directory_t* arch_paging_get_current_directory(void); // Get current page directory
 
 // Map a virtual address to a physical address
-bool arch_paging_map(arch_page_directory_t* dir, uint32_t virt, uint32_t phys, uint32_t flags);
+bool arch_paging_map(arch_page_directory_t* dir, uintptr_t virt, uintptr_t phys, uint32_t flags);
 
 // Unmap a virtual address
-bool arch_paging_unmap(arch_page_directory_t* dir, uint32_t virt);
+bool arch_paging_unmap(arch_page_directory_t* dir, uintptr_t virt);
 
 // Get physical address from virtual address (returns 0 if not mapped)
-uint32_t arch_paging_get_physical(arch_page_directory_t* dir, uint32_t virt);
+uintptr_t arch_paging_get_physical(arch_page_directory_t* dir, uintptr_t virt);
 
 // Identity map a range of physical addresses
-bool arch_paging_identity_map_range(arch_page_directory_t* dir, uint32_t start, uint32_t end, uint32_t flags);
+bool arch_paging_identity_map_range(arch_page_directory_t* dir, uintptr_t start, uintptr_t end, uint32_t flags);
 
 // Page fault handler (called by architecture-specific interrupt handler)
 void arch_paging_fault_handler(void* regs);

@@ -271,7 +271,7 @@ void switch_page_directory(page_directory_t* dir) {
     write_cr3(dir->physical_addr);
 }
 
-void map_page(page_directory_t* dir, uint32_t virtual_addr, uint32_t physical_addr, uint32_t flags) {
+void map_page(page_directory_t* dir, uintptr_t virtual_addr, uintptr_t physical_addr, uint32_t flags) {
     if (!dir || !dir->pml4) {
         return;
     }
@@ -342,11 +342,11 @@ void map_page(page_directory_t* dir, uint32_t virtual_addr, uint32_t physical_ad
     pt[pt_i] = (pa & X86_64_ADDR_MASK) | entry_flags;
 
     if (dir == current_directory) {
-        flush_tlb_single((uint32_t)va);
+        flush_tlb_single((uintptr_t)va);
     }
 }
 
-void unmap_page(page_directory_t* dir, uint32_t virtual_addr) {
+void unmap_page(page_directory_t* dir, uintptr_t virtual_addr) {
     if (!dir || !dir->pml4) {
         return;
     }
@@ -384,11 +384,11 @@ void unmap_page(page_directory_t* dir, uint32_t virtual_addr) {
     pt[pt_i] = 0;
 
     if (dir == current_directory) {
-        flush_tlb_single((uint32_t)va);
+        flush_tlb_single((uintptr_t)va);
     }
 }
 
-uint32_t get_physical_address(page_directory_t* dir, uint32_t virtual_addr) {
+uintptr_t get_physical_address(page_directory_t* dir, uintptr_t virtual_addr) {
     if (!dir || !dir->pml4) {
         return 0;
     }
@@ -412,7 +412,7 @@ uint32_t get_physical_address(page_directory_t* dir, uint32_t virtual_addr) {
 
     if (entry_large(pdpte)) {
         uint64_t phys = (pdpte & X86_64_1GB_ADDR_MASK) | (va & 0x3FFFFFFFULL);
-        return (uint32_t)phys;
+        return (uintptr_t)phys;
     }
 
     uint64_t* pd = (uint64_t*)(uintptr_t)entry_addr(pdpte);
@@ -423,7 +423,7 @@ uint32_t get_physical_address(page_directory_t* dir, uint32_t virtual_addr) {
 
     if (entry_large(pde)) {
         uint64_t phys = (pde & X86_64_2MB_ADDR_MASK) | (va & 0x1FFFFFULL);
-        return (uint32_t)phys;
+        return (uintptr_t)phys;
     }
 
     uint64_t* pt = (uint64_t*)(uintptr_t)entry_addr(pde);
@@ -432,10 +432,10 @@ uint32_t get_physical_address(page_directory_t* dir, uint32_t virtual_addr) {
         return 0;
     }
 
-    return (uint32_t)((pte & X86_64_ADDR_MASK) | (va & 0xFFFULL));
+    return (uintptr_t)((pte & X86_64_ADDR_MASK) | (va & 0xFFFULL));
 }
 
-int is_page_present(page_directory_t* dir, uint32_t virtual_addr) {
+int is_page_present(page_directory_t* dir, uintptr_t virtual_addr) {
     if (!dir || !dir->pml4) {
         return 0;
     }
@@ -481,16 +481,21 @@ void page_fault_handler(registers_t* regs) {
 
     serial_puts("\n=== PAGE FAULT (x86_64) ===\n");
     serial_puts("Fault address: 0x");
-    char buf[32];
-    itoa((uint32_t)faulting_address, buf, 16);
+    char buf[17];
+    for (int i = 0; i < 16; i++) {
+        int shift = (15 - i) * 4;
+        uint8_t nibble = (uint8_t)((faulting_address >> shift) & 0xF);
+        buf[i] = (nibble < 10) ? (char)('0' + nibble) : (char)('a' + (nibble - 10));
+    }
+    buf[16] = '\0';
     serial_puts(buf);
     serial_puts("\n");
 
     panic_screen(regs, "x86_64 page fault", __FILE__, __LINE__);
 }
 
-void flush_tlb_single(uint32_t virtual_addr) {
-    asm volatile("invlpg (%0)" :: "r"((uint64_t)virtual_addr) : "memory");
+void flush_tlb_single(uintptr_t virtual_addr) {
+    asm volatile("invlpg (%0)" :: "r"(virtual_addr) : "memory");
 }
 
 void flush_tlb_full(void) {
@@ -507,16 +512,16 @@ void remap_vga_buffer(void) {
     flush_tlb_single(0xB8000);
 }
 
-void enable_paging(uint32_t page_directory_physical) {
-    write_cr3((uint64_t)page_directory_physical);
+void enable_paging(uint64_t page_directory_physical) {
+    write_cr3(page_directory_physical);
 }
 
-void identity_map_range(page_directory_t* dir, uint32_t start, uint32_t end, uint32_t flags) {
+void identity_map_range(page_directory_t* dir, uintptr_t start, uintptr_t end, uint32_t flags) {
     uint32_t map_flags = flags | PAGE_PRESENT;
     start = PAGE_ALIGN_DOWN(start);
     end = PAGE_ALIGN_UP(end);
 
-    for (uint32_t addr = start; addr < end; addr += PAGE_SIZE) {
+    for (uintptr_t addr = start; addr < end; addr += PAGE_SIZE) {
         map_page(dir, addr, addr, map_flags);
     }
 }

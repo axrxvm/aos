@@ -78,7 +78,7 @@ uint32_t arch_get_user_data_segment(void) {
 
 extern uint64_t tss_rsp0;
 
-void arch_set_kernel_stack(uint32_t stack) {
+void arch_set_kernel_stack(uintptr_t stack) {
     tss_rsp0 = (uint64_t)stack;
 }
 

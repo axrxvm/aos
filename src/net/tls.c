@@ -290,7 +290,7 @@ tls_session_t* tls_session_create(tcp_socket_t* socket, const char* hostname) {
     session->socket = socket;
     session->state = TLS_STATE_INIT;
     session->version = TLS_VERSION_1_2;
-    session->verify_certificate = 0;  // Disabled by default for bare-metal
+    session->verify_certificate = 1;  // Secure-by-default: require certificate checks
     
     // Allocate receive buffer
     session->recv_buffer = (uint8_t*)kmalloc(TLS_RECV_BUFFER_SIZE);
@@ -353,6 +353,9 @@ void tls_session_free(tls_session_t* session) {
 void tls_set_verify(tls_session_t* session, uint8_t verify) {
     if (session) {
         session->verify_certificate = verify;
+        if (!verify) {
+            serial_puts("TLS: WARNING: certificate verification disabled by caller\n");
+        }
     }
 }
 
@@ -781,6 +784,13 @@ int tls_handshake(tls_session_t* session) {
             serial_puts("TLS: Failed to parse server certificate\n");
             kfree(cert_buffer);
             return -1;
+        }
+
+        // Track server certificate fingerprint for auditing/pinning workflows.
+        sha256_hash(ptr, cert_len, session->server_cert_hash);
+        session->cert_verified = session->verify_certificate ? 1 : 0;
+        if (!session->verify_certificate) {
+            serial_puts("TLS: WARNING: proceeding without certificate verification\n");
         }
     } else {
         serial_puts("TLS: Invalid Certificate message\n");

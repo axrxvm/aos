@@ -58,7 +58,7 @@ uint32_t arch_get_kernel_code_segment(void);
 uint32_t arch_get_kernel_data_segment(void);
 uint32_t arch_get_user_code_segment(void);
 uint32_t arch_get_user_data_segment(void);
-void arch_set_kernel_stack(uint32_t stack);
+void arch_set_kernel_stack(uintptr_t stack);
 #endif
 
 #endif // ARCH_H

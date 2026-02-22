@@ -18,9 +18,9 @@
 // Virtual Memory Manager - handles higher-level memory operations
 
 // Memory regions for different purposes
-#define VMM_USER_STACK_TOP      0xBFFFFFFF  // User stack grows down from here
-#define VMM_USER_HEAP_START     0x10000000  // User heap starts at 256MB
-#define VMM_USER_CODE_START     0x08048000  // Traditional ELF load address
+#define VMM_USER_STACK_TOP      ((uintptr_t)0x00000000BFFFFFFFULL)  // User stack grows down from here
+#define VMM_USER_HEAP_START     ((uintptr_t)0x0000000010000000ULL)  // User heap starts at 256MB
+#define VMM_USER_CODE_START     ((uintptr_t)0x0000000008048000ULL)  // Traditional ELF load address
 #define VMM_KERNEL_HEAP_START   KERNEL_HEAP_START
 
 // Allocation flags
@@ -65,8 +65,8 @@ typedef struct slab_cache {
 
 // Virtual memory area structure (for tracking allocations)
 typedef struct vma {
-    uint32_t start_addr;
-    uint32_t end_addr;
+    uintptr_t start_addr;
+    uintptr_t end_addr;
     uint32_t flags;
     uint32_t magic;             // Magic number for validation
     struct vma *next;
@@ -76,9 +76,9 @@ typedef struct vma {
 typedef struct {
     page_directory_t *page_dir;
     vma_t *vma_list;
-    uint32_t heap_start;
-    uint32_t heap_end;
-    uint32_t stack_top;
+    uintptr_t heap_start;
+    uintptr_t heap_end;
+    uintptr_t stack_top;
     slab_cache_t slab_caches[NUM_SLAB_CACHES];  // Per-process slab caches
 } address_space_t;
 
@@ -91,10 +91,10 @@ void destroy_address_space(address_space_t *as);
 void switch_address_space(address_space_t *as);
 
 // Memory allocation functions
-void *vmm_alloc_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pages, uint32_t flags);
-void *vmm_alloc_at(address_space_t *as, uint32_t virtual_addr, size_t size, uint32_t flags);
+void *vmm_alloc_pages(address_space_t *as, uintptr_t virtual_addr, size_t num_pages, uint32_t flags);
+void *vmm_alloc_at(address_space_t *as, uintptr_t virtual_addr, size_t size, uint32_t flags);
 void *vmm_alloc_anywhere(address_space_t *as, size_t size, uint32_t flags);
-void vmm_free_pages(address_space_t *as, uint32_t virtual_addr, size_t num_pages);
+void vmm_free_pages(address_space_t *as, uintptr_t virtual_addr, size_t num_pages);
 
 // Kernel memory allocation (using kernel address space)
 void *kmalloc_pages(size_t num_pages);
@@ -103,12 +103,12 @@ void *kmalloc_aligned(size_t size, size_t alignment);
 void kfree(void *ptr);
 
 // Memory mapping
-int vmm_map_physical(address_space_t *as, uint32_t virtual_addr, uint32_t physical_addr, size_t size, uint32_t flags);
-int vmm_unmap(address_space_t *as, uint32_t virtual_addr, size_t size);
+int vmm_map_physical(address_space_t *as, uintptr_t virtual_addr, uintptr_t physical_addr, size_t size, uint32_t flags);
+int vmm_unmap(address_space_t *as, uintptr_t virtual_addr, size_t size);
 
 // Utility functions
-int vmm_is_mapped(address_space_t *as, uint32_t virtual_addr);
-uint32_t vmm_virt_to_phys(address_space_t *as, uint32_t virtual_addr);
+int vmm_is_mapped(address_space_t *as, uintptr_t virtual_addr);
+uintptr_t vmm_virt_to_phys(address_space_t *as, uintptr_t virtual_addr);
 void vmm_print_stats(address_space_t *as);
 
 // Memory validation and debugging
