@@ -179,7 +179,7 @@ static void cmd_test_page(const char* args) {
     if (page1 && page2) {
         vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
         vga_puts("  Page 1: 0x");
-        itoa((uint32_t)page1, buf, 16);
+        itoa((uint32_t)(uintptr_t)page1, buf, 16);
         vga_puts(buf);
         vga_puts(" - ");
         vga_set_color(VGA_ATTR(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
@@ -187,7 +187,7 @@ static void cmd_test_page(const char* args) {
         
         vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
         vga_puts("  Page 2: 0x");
-        itoa((uint32_t)page2, buf, 16);
+        itoa((uint32_t)(uintptr_t)page2, buf, 16);
         vga_puts(buf);
         vga_puts(" - ");
         vga_set_color(VGA_ATTR(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
@@ -209,7 +209,7 @@ static void cmd_test_page(const char* args) {
     kprint("Test 2: DMA zone allocation");
     void *dma_page = alloc_page_from_zone(PMM_ZONE_DMA);
     if (dma_page) {
-        uint32_t dma_addr = (uint32_t)dma_page;
+        uint32_t dma_addr = (uint32_t)(uintptr_t)dma_page;
         vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
         vga_puts("  DMA Page: 0x");
         itoa(dma_addr, buf, 16);
@@ -236,14 +236,14 @@ static void cmd_test_page(const char* args) {
     if (contig) {
         vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
         vga_puts("  Start: 0x");
-        itoa((uint32_t)contig, buf, 16);
+        itoa((uint32_t)(uintptr_t)contig, buf, 16);
         vga_puts(buf);
         vga_set_color(VGA_ATTR(VGA_COLOR_WHITE, VGA_COLOR_BLACK));
         kprint(" - OK");
         vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
         // Note: Would need to free all 4 pages individually
         for (int i = 0; i < 4; i++) {
-            free_page((void*)((uint32_t)contig + i * 4096));
+            free_page((void*)((uintptr_t)contig + ((uintptr_t)i * 4096U)));
         }
     } else {
         vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));

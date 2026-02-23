@@ -390,7 +390,6 @@ static int set_file_block(simplefs_data_t* fs_data, simplefs_inode_t* inode, uin
 
 static uint32_t alloc_inode(simplefs_data_t* fs_data) {
     // serial_puts("alloc_inode: searching for free inode...\n");
-    char buf[32];
     // serial_puts("alloc_inode: total_inodes=");
     // itoa(fs_data->superblock.total_inodes, buf, 10);
     // serial_puts(buf);
@@ -593,7 +592,7 @@ static vnode_t* simplefs_inode_to_vnode(simplefs_data_t* fs_data, uint32_t inode
     vnode->refcount = 0;
     vnode->fs = fs;
     vnode->mount = NULL;
-    vnode->fs_data = (void*)(uint32_t)inode_num; // Store inode number
+    vnode->fs_data = (void*)(uintptr_t)inode_num; // Store inode number
     vnode->ops = &simplefs_vnode_ops;
     
     // Load permissions from inode (v0.7.3)
@@ -713,7 +712,6 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
     uint32_t inode_blocks = (fs_data->superblock.total_inodes + inodes_per_block - 1) / inodes_per_block;
     
     // serial_puts("SimpleFS: Reading inode table, inodes_per_block=");
-    char tmp_buf[16];
     // itoa(inodes_per_block, tmp_buf, 10);
     // serial_puts(tmp_buf);
     // serial_puts(", inode_blocks=");
@@ -745,14 +743,7 @@ static int simplefs_mount(filesystem_t* fs, const char* source, uint32_t flags) 
         
         // Debug: Show first block's root inode data
         if (i == 0) {
-            simplefs_inode_t* inode_0 = (simplefs_inode_t*)block;
-            // serial_puts("SimpleFS: Loaded inode[0].mode=");
-            // itoa(inode_0[0].mode, tmp_buf, 16);
-            // serial_puts(tmp_buf);
-            // serial_puts(", inode[1].mode=");
-            // itoa(inode_0[1].mode, tmp_buf, 16);
-            // serial_puts(tmp_buf);
-            // serial_puts("\n");
+            // serial_puts("SimpleFS: Loaded first inode block\n");
         }
     }
     
@@ -833,7 +824,7 @@ static int simplefs_vnode_read(vnode_t* node, void* buffer, uint32_t size, uint3
     }
     
     simplefs_data_t* fs_data = (simplefs_data_t*)node->fs->fs_data;
-    uint32_t inode_num = (uint32_t)node->fs_data;
+    uint32_t inode_num = (uint32_t)(uintptr_t)node->fs_data;
     simplefs_inode_t* inode = &fs_data->inode_table[inode_num];
     
     // Check if offset is beyond file size
@@ -889,7 +880,7 @@ static int simplefs_vnode_write(vnode_t* node, const void* buffer, uint32_t size
     }
     
     simplefs_data_t* fs_data = (simplefs_data_t*)node->fs->fs_data;
-    uint32_t inode_num = (uint32_t)node->fs_data;
+    uint32_t inode_num = (uint32_t)(uintptr_t)node->fs_data;
     simplefs_inode_t* inode = &fs_data->inode_table[inode_num];
     
     // serial_puts("SimpleFS: Writing ");
@@ -998,7 +989,7 @@ static vnode_t* simplefs_vnode_finddir(vnode_t* node, const char* name) {
     }
     
     simplefs_data_t* fs_data = (simplefs_data_t*)node->fs->fs_data;
-    uint32_t inode_num = (uint32_t)node->fs_data;
+    uint32_t inode_num = (uint32_t)(uintptr_t)node->fs_data;
     simplefs_inode_t* inode = &fs_data->inode_table[inode_num];
     
     uint8_t block_buffer[SIMPLEFS_BLOCK_SIZE];
@@ -1050,7 +1041,6 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
         return NULL;
     }
     
-    char buf[16];
     // itoa(new_inode_num, buf, 10);
     // serial_puts("SimpleFS: Allocated inode ");
     // serial_puts(buf);
@@ -1088,7 +1078,7 @@ static vnode_t* simplefs_vnode_create(vnode_t* parent, const char* name, uint32_
     write_inode(fs_data, new_inode_num);
     
     // Add directory entry to parent
-    uint32_t parent_inode_num = (uint32_t)parent->fs_data;
+    uint32_t parent_inode_num = (uint32_t)(uintptr_t)parent->fs_data;
     simplefs_inode_t* parent_inode = &fs_data->inode_table[parent_inode_num];
     
     // serial_puts("SimpleFS: Adding directory entry to parent inode ");
@@ -1174,7 +1164,7 @@ static int simplefs_vnode_unlink(vnode_t* parent, const char* name) {
     // serial_puts("'\n");
     
     simplefs_data_t* fs_data = (simplefs_data_t*)parent->fs->fs_data;
-    uint32_t parent_inode_num = (uint32_t)parent->fs_data;
+    uint32_t parent_inode_num = (uint32_t)(uintptr_t)parent->fs_data;
     simplefs_inode_t* parent_inode = &fs_data->inode_table[parent_inode_num];
     
     uint8_t block_buffer[SIMPLEFS_BLOCK_SIZE];
@@ -1284,7 +1274,7 @@ static int simplefs_vnode_mkdir(vnode_t* parent, const char* name) {
     write_inode(fs_data, new_inode_num);
     
     // Add directory entry to parent (similar to create)
-    uint32_t parent_inode_num = (uint32_t)parent->fs_data;
+    uint32_t parent_inode_num = (uint32_t)(uintptr_t)parent->fs_data;
     simplefs_inode_t* parent_inode = &fs_data->inode_table[parent_inode_num];
     
     uint8_t block_buffer[SIMPLEFS_BLOCK_SIZE];
@@ -1340,7 +1330,7 @@ static int simplefs_vnode_readdir(vnode_t* node, uint32_t index, dirent_t* diren
     }
     
     simplefs_data_t* fs_data = (simplefs_data_t*)node->fs->fs_data;
-    uint32_t inode_num = (uint32_t)node->fs_data;
+    uint32_t inode_num = (uint32_t)(uintptr_t)node->fs_data;
     simplefs_inode_t* inode = &fs_data->inode_table[inode_num];
     
     uint8_t block_buffer[SIMPLEFS_BLOCK_SIZE];
@@ -1401,7 +1391,7 @@ static int simplefs_vnode_stat(vnode_t* node, stat_t* stat) {
     }
     
     simplefs_data_t* fs_data = (simplefs_data_t*)node->fs->fs_data;
-    uint32_t inode_num = (uint32_t)node->fs_data;
+    uint32_t inode_num = (uint32_t)(uintptr_t)node->fs_data;
     simplefs_inode_t* inode = &fs_data->inode_table[inode_num];
     
     stat->st_ino = inode_num;
@@ -1519,7 +1509,6 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
     
     // Debug: Show root inode data before writing
     // serial_puts("SimpleFS format: Root inode mode=");
-    char dbuf[16];
     // itoa(root_inode[1].mode, dbuf, 16);
     // serial_puts(dbuf);
     // serial_puts(", writing to LBA ");
@@ -1587,7 +1576,6 @@ int simplefs_format(uint32_t start_lba, uint32_t num_blocks) {
     
     // serial_puts("SimpleFS v2 format complete.\n");
     // serial_puts("  Total blocks: ");
-    char buf[16];
     // itoa(num_blocks, buf, 10);
     // serial_puts(buf);
     // serial_puts("\n  Total inodes: ");

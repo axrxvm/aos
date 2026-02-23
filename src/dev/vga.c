@@ -55,7 +55,6 @@ static int vbe_available = 0;
 
 // VBE Information
 static vbe_info_block_t vbe_info;
-static vbe_mode_info_t vbe_mode_info;
 
 // Multiboot-compatible boot information from the active boot path (GRUB or ABL)
 static multiboot_info_t* grub_mbi = NULL;
@@ -68,9 +67,9 @@ static void vga_render_with_offset(void);
 static int vga_strlen(const char *s);
 static void vga_itoa(int value, char *str, int radix);
 static uint8_t vga_find_closest_color(uint8_t r, uint8_t g, uint8_t b);
-static int vga_bios_call(uint16_t ax, uint16_t bx, uint16_t cx, uint16_t dx);
 static inline int abs(int x) { return x < 0 ? -x : x; }
-static inline void swap(int* a, int* b) { int t = *a; *a = *b; *b = t; }
+static inline void swap_int(int* a, int* b) { int t = *a; *a = *b; *b = t; }
+static inline void swap_u16(uint16_t* a, uint16_t* b) { uint16_t t = *a; *a = *b; *b = t; }
 
 void vga_init(void) {
     vga_clear();
@@ -859,38 +858,12 @@ static int vga_bios_int10(v86_regs_t* regs) {
     return 0;  // Success
 }
 
-// Improved BIOS call wrapper with proper register handling
-static int vga_bios_call(uint16_t ax, uint16_t bx, uint16_t cx, uint16_t dx) {
-    v86_regs_t regs;
-    memset(&regs, 0, sizeof(regs));
-    
-    regs.eax = ax;
-    regs.ebx = bx;
-    regs.ecx = cx;
-    regs.edx = dx;
-    
-    // Set up segment registers for real mode
-    regs.es = 0x0000;
-    regs.ds = 0x0000;
-    regs.fs = 0x0000;
-    regs.gs = 0x0000;
-    
-    int result = vga_bios_int10(&regs);
-    
-    // Check VBE return code in AX
-    if (result == 0 && (regs.eax & 0xFFFF) == 0x004F) {
-        return 1;  // VBE call successful
-    }
-    
-    return 0;  // Failed or not supported
-}
-
 int vga_detect_vbe(void) {
     // Use bootloader-provided multiboot-compatible VBE information.
     if (grub_mbi && (grub_mbi->flags & MULTIBOOT_INFO_VBE_INFO)) {
         // The bootloader has already queried VBE info from BIOS in real mode.
-        multiboot_vbe_controller_info_t* ctrl_info = 
-            (multiboot_vbe_controller_info_t*)(uint32_t)grub_mbi->vbe_control_info;
+        multiboot_vbe_controller_info_t* ctrl_info =
+            (multiboot_vbe_controller_info_t*)(uintptr_t)grub_mbi->vbe_control_info;
         
         if (ctrl_info) {
             // Copy VBE controller info
@@ -954,8 +927,8 @@ int vga_get_vbe_mode_info(uint16_t mode, vbe_mode_info_t* info) {
     
     // First, try to get mode info from bootloader-provided multiboot-compatible data.
     if (grub_mbi && (grub_mbi->flags & MULTIBOOT_INFO_VBE_INFO)) {
-        multiboot_vbe_mode_info_t* grub_mode_info = 
-            (multiboot_vbe_mode_info_t*)(uint32_t)grub_mbi->vbe_mode_info;
+        multiboot_vbe_mode_info_t* grub_mode_info =
+            (multiboot_vbe_mode_info_t*)(uintptr_t)grub_mbi->vbe_mode_info;
         
         // Check if the requested mode matches the current mode set by GRUB
         if (grub_mode_info && grub_mbi->vbe_mode == mode) {
@@ -1358,7 +1331,7 @@ int vga_set_mode(uint16_t mode) {
         current_mode_info.is_linear = 1;
         current_mode_info.is_vbe = 1;
         
-        graphics_framebuffer = (uint8_t*)(uint32_t)mode_info.framebuffer;
+        graphics_framebuffer = (uint8_t*)(uintptr_t)mode_info.framebuffer;
         
         // VBE Function 02h: Set VBE Mode
         // INT 0x10, AX=0x4F02, BX=mode | 0x4000 (enable linear framebuffer bit)
@@ -1931,9 +1904,9 @@ void vga_draw_triangle(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint1
 }
 
 void vga_fill_triangle(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint32_t color) {
-    if (y0 > y1) { swap((int*)&y0, (int*)&y1); swap((int*)&x0, (int*)&x1); }
-    if (y1 > y2) { swap((int*)&y1, (int*)&y2); swap((int*)&x1, (int*)&x2); }
-    if (y0 > y1) { swap((int*)&y0, (int*)&y1); swap((int*)&x0, (int*)&x1); }
+    if (y0 > y1) { swap_u16(&y0, &y1); swap_u16(&x0, &x1); }
+    if (y1 > y2) { swap_u16(&y1, &y2); swap_u16(&x1, &x2); }
+    if (y0 > y1) { swap_u16(&y0, &y1); swap_u16(&x0, &x1); }
     
     for (uint16_t y = y0; y <= y2; y++) {
         int x_start, x_end;
@@ -1946,7 +1919,7 @@ void vga_fill_triangle(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint1
             x_end = x0 + ((x2 - x0) * (y - y0)) / (y2 - y0 + 1);
         }
         
-        if (x_start > x_end) swap(&x_start, &x_end);
+        if (x_start > x_end) swap_int(&x_start, &x_end);
         
         for (int x = x_start; x <= x_end; x++) {
             vga_plot_pixel(x, y, color);
@@ -2204,9 +2177,9 @@ void vga_apply_filter_sepia(void) {
             uint8_t tg = (rgb.r * 35 + rgb.g * 69 + rgb.b * 17) / 100;
             uint8_t tb = (rgb.r * 27 + rgb.g * 53 + rgb.b * 13) / 100;
             
-            rgb.r = tr > 255 ? 255 : tr;
-            rgb.g = tg > 255 ? 255 : tg;
-            rgb.b = tb > 255 ? 255 : tb;
+            rgb.r = tr;
+            rgb.g = tg;
+            rgb.b = tb;
             
             vga_plot_pixel(x, y, vga_rgb_to_rgb888(rgb));
         }

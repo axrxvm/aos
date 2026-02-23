@@ -45,6 +45,8 @@ static volatile uint32_t tx_tail = 0;
 static uint32_t tx_packets = 0;
 static uint32_t rx_packets = 0;
 
+// Keep boot networking responsive: avoid long DHCP blocking during startup.
+#define E1000_BOOT_DHCP_TIMEOUT_TICKS 100
 
 // MMIO Register Access
 
@@ -328,7 +330,7 @@ int e1000_init(void) {
                  mmio_phys + (i * 0x1000), 
                  PAGE_PRESENT | PAGE_WRITE);
     }
-    mmio_base = (uint8_t*)mmio_phys;
+    mmio_base = (uint8_t*)(uintptr_t)mmio_phys;
     
     // Reset device
     e1000_write_reg(E1000_REG_CTRL, E1000_CTRL_RST);
@@ -391,7 +393,9 @@ int e1000_init(void) {
     serial_puts("\n");
     
     // Attempt DHCP
-    if (dhcp_discover(e1000_iface) == 0) {
+    if (dhcp_discover_timed(e1000_iface,
+                            E1000_BOOT_DHCP_TIMEOUT_TICKS,
+                            E1000_BOOT_DHCP_TIMEOUT_TICKS) == 0) {
         dhcp_config_t* config = dhcp_get_config();
         dhcp_configure_interface(e1000_iface, config);
     } else {

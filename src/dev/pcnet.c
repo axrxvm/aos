@@ -53,6 +53,8 @@ static volatile uint32_t tx_tail = 0;
 static uint32_t tx_packets = 0;
 static uint32_t rx_packets = 0;
 
+// Keep boot networking responsive: avoid long DHCP blocking during startup.
+#define PCNET_BOOT_DHCP_TIMEOUT_TICKS 100
 // I/O Access Functions
 
 static inline uint16_t pcnet_read_csr16(uint8_t csr) {
@@ -557,7 +559,9 @@ int pcnet_init(void) {
     
     // Attempt DHCP
     serial_puts("pcnet: Starting DHCP...\n");
-    if (dhcp_discover(pcnet_iface) == 0) {
+    if (dhcp_discover_timed(pcnet_iface,
+                            PCNET_BOOT_DHCP_TIMEOUT_TICKS,
+                            PCNET_BOOT_DHCP_TIMEOUT_TICKS) == 0) {
         dhcp_config_t* config = dhcp_get_config();
         dhcp_configure_interface(pcnet_iface, config);
         serial_puts("pcnet: DHCP OK - ");

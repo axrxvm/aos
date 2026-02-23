@@ -370,12 +370,14 @@ void editor_display(editor_context_t* ctx) {
     editor_clear_screen();
     
     // Calculate cursor screen position for visual indicator
-    int32_t cursor_screen_row = -1;
-    int32_t cursor_screen_col = -1;
+    uint32_t cursor_screen_row = 0;
+    uint32_t cursor_screen_col = 0;
+    int cursor_visible = 0;
     if (ctx->cursor_line >= ctx->view_line && ctx->cursor_line < ctx->view_line + EDITOR_DISPLAY_HEIGHT) {
         cursor_screen_row = ctx->cursor_line - ctx->view_line;
         if (ctx->cursor_col >= ctx->view_col && ctx->cursor_col < ctx->view_col + EDITOR_DISPLAY_WIDTH) {
             cursor_screen_col = ctx->cursor_col - ctx->view_col;
+            cursor_visible = 1;
         }
     }
     
@@ -390,7 +392,7 @@ void editor_display(editor_context_t* ctx) {
             char c = line->data[j];
             
             // Check if this is the cursor position - if so, draw with inverted colors
-            if (line_count == cursor_screen_row && col == cursor_screen_col) {
+            if (cursor_visible && line_count == cursor_screen_row && col == cursor_screen_col) {
                 uint16_t* buffer = vga_get_buffer();
                 uint32_t pos = line_count * 80 + col;
                 // Inverted colors: 0x70 = white background, black foreground
@@ -402,7 +404,7 @@ void editor_display(editor_context_t* ctx) {
         }
         
         // Draw cursor if it's at the end of this line (after last character)
-        if (line_count == cursor_screen_row && col == cursor_screen_col) {
+        if (cursor_visible && line_count == cursor_screen_row && col == cursor_screen_col) {
             uint16_t* buffer = vga_get_buffer();
             uint32_t pos = line_count * 80 + col;
             // Inverted space character to show cursor position
@@ -431,9 +433,9 @@ void editor_display(editor_context_t* ctx) {
     
     // Update hardware cursor position based on visible cursor location
     // Ensure cursor is always within valid screen bounds
-    if (cursor_screen_row >= 0 && cursor_screen_row < EDITOR_DISPLAY_HEIGHT) {
+    if (cursor_visible && cursor_screen_row < EDITOR_DISPLAY_HEIGHT) {
         uint8_t screen_row = (uint8_t)cursor_screen_row;
-        uint8_t screen_col = (cursor_screen_col >= 0 && cursor_screen_col < EDITOR_DISPLAY_WIDTH) ? 
+        uint8_t screen_col = (cursor_screen_col < EDITOR_DISPLAY_WIDTH) ?
                              (uint8_t)cursor_screen_col : 0;
         update_cursor(screen_row, screen_col);
     } else {

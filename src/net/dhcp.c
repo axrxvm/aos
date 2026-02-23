@@ -164,8 +164,8 @@ static void dhcp_receive_callback(uint32_t src_ip, uint16_t src_port, const uint
     }
 }
 
-// Send DHCP Discover
-int dhcp_discover(net_interface_t* iface) {
+// Send DHCP Discover with configurable timeouts (in PIT ticks).
+int dhcp_discover_timed(net_interface_t* iface, uint32_t offer_timeout_ticks, uint32_t ack_timeout_ticks) {
     if (!iface) return -1;
     
     dhcp_iface = iface;
@@ -214,7 +214,7 @@ int dhcp_discover(net_interface_t* iface) {
     uint8_t recv_buffer[sizeof(dhcp_message_t)];
     uint32_t src_ip;
     uint16_t src_port;
-    uint32_t timeout = get_tick_count() + 500;  // 5 seconds
+    uint32_t timeout = get_tick_count() + offer_timeout_ticks;
     
     while (get_tick_count() < timeout && !dhcp_configured) {
         net_poll();  // Poll for packets on all network interfaces
@@ -253,7 +253,7 @@ int dhcp_discover(net_interface_t* iface) {
     udp_socket_sendto(sock, (const uint8_t*)&msg, sizeof(dhcp_message_t), 0xFFFFFFFF, DHCP_SERVER_PORT);
     
     // Wait for ACK
-    timeout = get_tick_count() + 500;
+    timeout = get_tick_count() + ack_timeout_ticks;
     while (get_tick_count() < timeout && !dhcp_configured) {
         net_poll();
         
@@ -265,6 +265,12 @@ int dhcp_discover(net_interface_t* iface) {
     
     udp_socket_close(sock);
     return dhcp_configured ? 0 : -1;
+}
+
+// Send DHCP Discover with default boot-compatible timeout budget.
+int dhcp_discover(net_interface_t* iface) {
+    // 500 ticks at 100Hz timer ~= 5 seconds for each DHCP phase.
+    return dhcp_discover_timed(iface, 500, 500);
 }
 
 // Configure interface with DHCP settings

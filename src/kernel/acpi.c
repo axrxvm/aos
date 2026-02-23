@@ -74,7 +74,7 @@ static bool validate_checksum(const void* ptr, size_t length) {
 static rsdp_t* find_rsdp_in_region(uint32_t start, uint32_t end) {
     // RSDP must be 16-byte aligned
     for (uint32_t addr = start; addr < end; addr += 16) {
-        rsdp_t* rsdp = (rsdp_t*)addr;
+        rsdp_t* rsdp = (rsdp_t*)(uintptr_t)addr;
         
         // Check signature
         if (memcmp(rsdp->signature, RSDP_SIGNATURE, RSDP_SIGNATURE_LEN) == 0) {

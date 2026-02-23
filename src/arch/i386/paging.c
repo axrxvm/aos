@@ -186,12 +186,6 @@ void map_page(page_directory_t *dir, uint32_t virtual_addr, uint32_t physical_ad
         serial_puts("WARNING: Mapping to physical address 0 (except for null page)\n");
     }
     
-    // Additional validation: Check for obviously invalid addresses
-    if (physical_addr > 0x100000000ULL) {
-        serial_puts("ERROR: map_page - physical address out of range\n");
-        return;
-    }
-    
     // Get page directory and page table indices
     uint32_t dir_index = virtual_addr >> 22;  // Top 10 bits
     uint32_t table_index = (virtual_addr >> 12) & 0x3FF;  // Middle 10 bits

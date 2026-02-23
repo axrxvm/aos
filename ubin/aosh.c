@@ -135,7 +135,7 @@ static inline intptr_t syscall3(intptr_t num, intptr_t arg1, intptr_t arg2, intp
  *  KERNEL INTERFACE
 */
 
-static void u_exit(int status) {
+static __attribute__((unused)) void u_exit(int status) {
     syscall1(SYS_EXIT, status);
     for (;;) __asm__ volatile ("hlt");  /* never reached */
 }
@@ -208,7 +208,7 @@ static void u_vga_enable_cursor(void) {
     syscall0(SYS_VGA_ENABLE_CURSOR);
 }
 
-static void u_vga_disable_cursor(void) {
+static __attribute__((unused)) void u_vga_disable_cursor(void) {
     syscall0(SYS_VGA_DISABLE_CURSOR);
 }
 
@@ -236,7 +236,7 @@ static void u_vga_scroll_down(void) {
     syscall0(SYS_VGA_SCROLL_DOWN);
 }
 
-static void u_vga_scroll_to_bottom(void) {
+static __attribute__((unused)) void u_vga_scroll_to_bottom(void) {
     syscall0(SYS_VGA_SCROLL_TO_BOTTOM);
 }
 

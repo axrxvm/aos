@@ -243,7 +243,7 @@ static int procfs_read_pidinfo(pid_t pid, void* buffer, uint32_t size, uint32_t 
     pos = append_kv_num(scratch, sizeof(scratch), pos, "time_slice", proc->time_slice);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "total_time", proc->total_time);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "parent_tid", (uint32_t)proc->parent_pid);
-    pos = append_kv_hex(scratch, sizeof(scratch), pos, "addr_space", (uint32_t)proc->address_space);
+    pos = append_kv_hex(scratch, sizeof(scratch), pos, "addr_space", (uint32_t)(uintptr_t)proc->address_space);
     pos = append_kv_hex(scratch, sizeof(scratch), pos, "kernel_sp", proc->kernel_stack);
 
     return copy_out(scratch, pos, offset, buffer, size);

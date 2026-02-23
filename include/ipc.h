@@ -67,8 +67,8 @@ typedef struct channel {
 
 typedef struct shared_region {
     char name[REGION_NAME_LEN];
-    uint32_t virt_addr;
-    uint32_t phys_addr;
+    uintptr_t virt_addr;
+    uintptr_t phys_addr;
     uint32_t size;
     pid_t owner_pid;
     uint32_t ref_count;

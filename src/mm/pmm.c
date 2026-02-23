@@ -124,7 +124,7 @@ static void* alloc_from_stack(void) {
         }
         set_frame(frame);
         alloc_count++;
-        return (void*)(frame * PAGE_SIZE);
+        return (void*)(uintptr_t)(frame * PAGE_SIZE);
     }
     return NULL;
 }
@@ -226,6 +226,8 @@ void init_pmm(uint32_t mem_size) {
 }
 
 void init_pmm_advanced(uint32_t mem_size, void *mmap_addr, uint32_t mmap_length) {
+    (void)mmap_addr;
+    (void)mmap_length;
     // First do basic initialization
     init_pmm(mem_size);
     
@@ -273,7 +275,7 @@ void* alloc_page() {
     
     set_frame(frame);
     alloc_count++;
-    return (void*)(frame * PAGE_SIZE);
+    return (void*)(uintptr_t)(frame * PAGE_SIZE);
 }
 
 void* alloc_page_from_zone(pmm_zone_t zone) {
@@ -291,7 +293,7 @@ void* alloc_page_from_zone(pmm_zone_t zone) {
     set_frame(frame);
     alloc_count++;
     zones[zone].used_frames++;
-    return (void*)(frame * PAGE_SIZE);
+    return (void*)(uintptr_t)(frame * PAGE_SIZE);
 }
 
 void* alloc_pages_contiguous(size_t num_pages) {
@@ -319,7 +321,7 @@ void* alloc_pages_contiguous(size_t num_pages) {
                 set_frame(start + i);
             }
             alloc_count += num_pages;
-            return (void*)(start * PAGE_SIZE);
+            return (void*)(uintptr_t)(start * PAGE_SIZE);
         }
     }
     
@@ -334,7 +336,7 @@ void free_page(void* page) {
         return;
     }
     
-    uint32_t frame = (uint32_t)page / PAGE_SIZE;
+    uint32_t frame = (uint32_t)((uintptr_t)page / PAGE_SIZE);
     
     // Validate frame is within bounds
     if (frame >= total_frames || frame >= MAX_FRAMES) {
@@ -621,4 +623,3 @@ void pmm_dump_allocations(void) {
     serial_puts(" used frames\n");
     serial_puts("===========================\n\n");
 }
-

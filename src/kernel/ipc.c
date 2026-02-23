@@ -217,7 +217,7 @@ int region_create(const char* name, uint32_t size, uint32_t permissions) {
     
     // Allocate physical pages
     uint32_t pages = (size + 4095) / 4096;
-    region->phys_addr = (uint32_t)alloc_page();
+    region->phys_addr = (uintptr_t)alloc_page();
     if (!region->phys_addr) {
         kfree(region);
         return -1;
@@ -266,7 +266,7 @@ int region_close(const char* name) {
     if (region->ref_count == 0) {
         uint32_t pages = (region->size + 4095) / 4096;
         for (uint32_t i = 0; i < pages; i++) {
-            free_page((void*)(region->phys_addr + (i * 4096)));
+            free_page((void*)(region->phys_addr + ((uintptr_t)i * 4096U)));
         }
         
         // Remove from list
@@ -294,7 +294,7 @@ void* region_map(const char* name) {
     if (!current || !current->address_space) return NULL;
     
     // Map into process address space
-    uint32_t virt_addr = 0x50000000;  // Shared region base address
+    uintptr_t virt_addr = 0x50000000;  // Shared region base address
     uint32_t flags = VMM_PRESENT | VMM_USER;
     if (region->permissions & 0x02) {
         flags |= VMM_WRITE;

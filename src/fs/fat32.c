@@ -53,11 +53,10 @@ static void free_cluster_chain(fat32_data_t* fs_data, uint32_t first_cluster);
 static uint32_t cluster_to_sector(fat32_data_t* fs_data, uint32_t cluster);
 static void parse_short_name(const uint8_t* short_name, char* out_name);
 static void create_short_name(const char* long_name, uint8_t* short_name);
-static uint8_t lfn_checksum(const uint8_t* short_name);
 static void parse_lfn_entry(fat32_lfn_entry_t* lfn, char* name_part);
 static int find_dir_entry(fat32_data_t* fs_data, uint32_t dir_cluster, const char* name, 
                          fat32_dir_entry_t* entry, uint32_t* entry_sector, uint32_t* entry_offset);
-static vnode_t* create_vnode_from_entry(fat32_data_t* fs_data, fat32_dir_entry_t* entry, 
+static vnode_t* create_vnode_from_entry(fat32_dir_entry_t* entry,
                                        const char* name, filesystem_t* fs, uint32_t parent_cluster);
 static int strcasecmp_simple(const char* s1, const char* s2);
 static int add_dir_entry(fat32_data_t* fs_data, uint32_t dir_cluster, const char* name, 
@@ -326,14 +325,6 @@ static void create_short_name(const char* long_name, uint8_t* short_name) {
             short_name[8 + i] = (uint8_t)c;
         }
     }
-}
-
-static uint8_t lfn_checksum(const uint8_t* short_name) {
-    uint8_t sum = 0;
-    for (int i = 0; i < 11; i++) {
-        sum = ((sum & 1) << 7) + (sum >> 1) + short_name[i];
-    }
-    return sum;
 }
 
 static void parse_lfn_entry(fat32_lfn_entry_t* lfn, char* name_part) {
@@ -633,7 +624,7 @@ static int find_dir_entry(fat32_data_t* fs_data, uint32_t dir_cluster, const cha
     return -1; // Not found
 }
 
-static vnode_t* create_vnode_from_entry(fat32_data_t* fs_data, fat32_dir_entry_t* entry,
+static vnode_t* create_vnode_from_entry(fat32_dir_entry_t* entry,
                                        const char* name, filesystem_t* fs, uint32_t parent_cluster) {
     vnode_t* vnode = (vnode_t*)kmalloc(sizeof(vnode_t));
     if (!vnode) {
@@ -683,6 +674,7 @@ static vnode_t* create_vnode_from_entry(fat32_data_t* fs_data, fat32_dir_entry_t
 
 
 static int fat32_vnode_open(vnode_t* node, uint32_t flags) {
+    (void)flags;
     if (!node) {
         return VFS_ERR_INVALID;
     }
@@ -811,10 +803,7 @@ static int fat32_vnode_write(vnode_t* node, const void* buffer, uint32_t size, u
     
     // Skip to the cluster containing offset
     uint32_t cluster_skip = offset / cluster_size;
-    uint32_t prev_cluster = 0;
-    
     for (uint32_t i = 0; i < cluster_skip; i++) {
-        prev_cluster = cluster;
         uint32_t next = get_next_cluster(fs_data, cluster);
         
         if (next >= FAT32_CLUSTER_RESERVED) {
@@ -861,7 +850,6 @@ static int fat32_vnode_write(vnode_t* node, const void* buffer, uint32_t size, u
         cluster_offset = 0;
         
         if (bytes_written < size) {
-            prev_cluster = cluster;
             uint32_t next = get_next_cluster(fs_data, cluster);
             
             if (next >= FAT32_CLUSTER_RESERVED) {
@@ -912,13 +900,14 @@ static vnode_t* fat32_vnode_finddir(vnode_t* node, const char* name) {
     
     fat32_dir_entry_t entry;
     if (find_dir_entry(fs_data, file_data->first_cluster, name, &entry, NULL, NULL) == 0) {
-        return create_vnode_from_entry(fs_data, &entry, name, node->fs, file_data->first_cluster);
+        return create_vnode_from_entry(&entry, name, node->fs, file_data->first_cluster);
     }
     
     return NULL;
 }
 
 static vnode_t* fat32_vnode_create(vnode_t* parent, const char* name, uint32_t flags) {
+    (void)flags;
     if (!parent || !name || !parent->fs || !parent->fs->fs_data) {
         return NULL;
     }
@@ -961,7 +950,7 @@ static vnode_t* fat32_vnode_create(vnode_t* parent, const char* name, uint32_t f
     // Sync to disk immediately to ensure persistence
     fat32_sync(fs_data);
     
-    return create_vnode_from_entry(fs_data, &new_entry, name, parent->fs, parent_data->first_cluster);
+    return create_vnode_from_entry(&new_entry, name, parent->fs, parent_data->first_cluster);
 }
 
 static int fat32_vnode_unlink(vnode_t* parent, const char* name) {
@@ -1213,6 +1202,7 @@ static uint32_t fat32_parse_source_lba(const char* source) {
 
 
 static int fat32_mount(filesystem_t* fs, const char* source, uint32_t flags) {
+    (void)flags;
     if (!fs) {
         return VFS_ERR_INVALID;
     }

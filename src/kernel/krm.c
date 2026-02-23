@@ -349,6 +349,8 @@ static void krm_analyze_panic(void) {
         uint32_t err_code = krm_panic_data.registers.err_code;
         uint32_t eip = krm_panic_data.registers.eip;
         uint32_t cr2 = 0; // Page fault address (would need to be captured)
+        (void)eip;
+        (void)cr2;
         
         switch (int_no) {
             case 0: // Divide by Zero
@@ -989,6 +991,9 @@ static void krm_main_loop(void) {
                             break;
                         case KRM_MENU_HALT:
                             krm_halt();
+                            break;
+                        case KRM_MENU_COUNT:
+                        default:
                             break;
                     }
                     break;

@@ -75,7 +75,7 @@ void mem_debug_record_alloc(void *ptr, size_t size, const char *file, int line) 
             #if MEM_DEBUG_VERBOSE
             serial_puts("ALLOC: ");
             char buf[16];
-            itoa((uint32_t)ptr, buf, 16);
+            itoa((uint32_t)(uintptr_t)ptr, buf, 16);
             serial_puts(buf);
             serial_puts(" size=");
             itoa(size, buf, 10);
@@ -129,7 +129,7 @@ void mem_debug_record_free(void *ptr, const char *file, int line) {
     if (!found) {
         serial_puts("ERROR: Free of untracked pointer: 0x");
         char buf[16];
-        itoa((uint32_t)ptr, buf, 16);
+        itoa((uint32_t)(uintptr_t)ptr, buf, 16);
         serial_puts(buf);
         serial_puts(" at ");
         serial_puts(file);
@@ -156,7 +156,7 @@ void mem_debug_check_leaks(void) {
             
             serial_puts("LEAK: ");
             char buf[16];
-            itoa((uint32_t)alloc_records[i].ptr, buf, 16);
+            itoa((uint32_t)(uintptr_t)alloc_records[i].ptr, buf, 16);
             serial_puts(buf);
             serial_puts(" size=");
             itoa(alloc_records[i].size, buf, 10);
@@ -208,7 +208,7 @@ void mem_debug_print_allocations(void) {
             itoa(shown + 1, buf, 10);
             serial_puts(buf);
             serial_puts("] 0x");
-            itoa((uint32_t)alloc_records[i].ptr, buf, 16);
+            itoa((uint32_t)(uintptr_t)alloc_records[i].ptr, buf, 16);
             serial_puts(buf);
             serial_puts(" (");
             itoa(alloc_records[i].size, buf, 10);
@@ -294,7 +294,7 @@ int mem_debug_check_heap_integrity(void) {
             if (!vmm_check_guards(alloc_records[i].ptr)) {
                 serial_puts("ERROR: Guard corruption detected in allocation at 0x");
                 char buf[16];
-                itoa((uint32_t)alloc_records[i].ptr, buf, 16);
+                itoa((uint32_t)(uintptr_t)alloc_records[i].ptr, buf, 16);
                 serial_puts(buf);
                 serial_puts("\n");
                 errors++;
@@ -319,8 +319,8 @@ int mem_debug_check_heap_integrity(void) {
 int mem_debug_validate_memory_range(void *start, size_t size) {
     if (!start || size == 0) return 0;
     
-    uint32_t addr = (uint32_t)start;
-    uint32_t end = addr + size;
+    uintptr_t addr = (uintptr_t)start;
+    uintptr_t end = addr + size;
     
     // Check if range is in valid memory
     if (addr < 0x1000) {
@@ -335,11 +335,11 @@ int mem_debug_validate_memory_range(void *start, size_t size) {
     }
     
     // Validate all pages in range are mapped
-    for (uint32_t page = addr; page < end; page += 4096) {
-        if (!vmm_validate_pointer((void *)page)) {
+    for (uintptr_t page = addr; page < end; page += 4096) {
+        if (!vmm_validate_pointer((void*)page)) {
             serial_puts("ERROR: Memory range contains unmapped page at 0x");
             char buf[16];
-            itoa(page, buf, 16);
+            itoa((uint32_t)page, buf, 16);
             serial_puts(buf);
             serial_puts("\n");
             return 0;

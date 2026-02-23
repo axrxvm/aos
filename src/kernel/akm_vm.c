@@ -840,7 +840,7 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
                         itoa(args[0], tmp, 10);
                         strcat(dbg, tmp);
                         strcat(dbg, ") -> 0x");
-                        itoa((uint32_t)buf, tmp, 16);
+                        itoa((uint32_t)(uintptr_t)buf, tmp, 16);
                         strcat(dbg, tmp);
                         strcat(dbg, ": ");
                         strcat(dbg, buf);

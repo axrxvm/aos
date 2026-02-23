@@ -84,6 +84,7 @@ typedef struct {
 // DHCP Functions
 void dhcp_init(void);
 int dhcp_discover(net_interface_t* iface);
+int dhcp_discover_timed(net_interface_t* iface, uint32_t offer_timeout_ticks, uint32_t ack_timeout_ticks);
 int dhcp_configure_interface(net_interface_t* iface, dhcp_config_t* config);
 dhcp_config_t* dhcp_get_config(void);
 
