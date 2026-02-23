@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <fs/vfs.h>
 #include <time_subsystem.h>
+#include <bgtask.h>
 
 // Storage for built-in services
 static service_t builtin_services[16];
@@ -94,15 +95,31 @@ static void service_network_stop(void) {
 // Time synchronization service
 static void service_timesync_start(void) {
     serial_puts("Time sync service started\n");
-    if (time_sync_now() == 0) {
-        serial_puts("Time sync service: wall clock synchronized\n");
+    if (bgtask_queue_timesync() == 0) {
+        serial_puts("Time sync service: queued background synchronization\n");
     } else {
-        serial_puts("Time sync service: synchronization failed\n");
+        serial_puts("Time sync service: failed to queue background synchronization\n");
     }
 }
 
 static void service_timesync_stop(void) {
     serial_puts("Time sync service stopped\n");
+}
+
+// Background task service
+static void service_bgtask_start(void) {
+    int pid = bgtask_service_start();
+    if (pid > 0) {
+        init_service_attach_task("bgtask", (uint32_t)pid);
+        serial_puts("Background task service started\n");
+    } else {
+        serial_puts("Background task service failed to start\n");
+    }
+}
+
+static void service_bgtask_stop(void) {
+    bgtask_service_stop();
+    serial_puts("Background task service stopped\n");
 }
 
 
@@ -287,9 +304,20 @@ void init_default_services(void) {
         "Timezone-aware wall clock synchronization",
         SERVICE_TYPE_DAEMON,
         multi_level,
-        6,
+        7,
         service_timesync_start,
         service_timesync_stop,
+        true
+    );
+
+    init_register_builtin_service(
+        "bgtask",
+        "Background task queue worker",
+        SERVICE_TYPE_DAEMON,
+        multi_level,
+        6,
+        service_bgtask_start,
+        service_bgtask_stop,
         true
     );
     

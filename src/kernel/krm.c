@@ -502,7 +502,7 @@ static void krm_analyze_panic(void) {
     }
     
     // Add universal suggestion to report the issue
-    krm_add_suggestion("Report this at https://github.com/axrxvm/aos/issues");
+    krm_add_suggestion("Report this via bugreport or /report API endpoint");
     
     krm_serial_write_string("[KRM] Panic analysis complete\n");
     krm_serial_write_string("[KRM] Explanation: ");

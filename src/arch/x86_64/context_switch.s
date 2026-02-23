@@ -16,7 +16,8 @@ global switch_context
 ;
 ; cpu_context_t layout on x86_64 (legacy names, 64-bit values):
 ;   +0 eax, +8 ebx, +16 ecx, +24 edx, +32 esi, +40 edi,
-;   +48 ebp, +56 esp, +64 eip, +72 eflags, +80 cr3
+;   +48 ebp, +56 esp, +64 eip, +72 eflags, +80 cr3,
+;   +88 r12, +96 r13, +104 r14, +112 r15
 
 switch_context:
     mov r8, rdi
@@ -30,7 +31,8 @@ switch_context:
     mov [r8 + 32], rsi
     mov [r8 + 40], rdi
     mov [r8 + 48], rbp
-    mov [r8 + 56], rsp
+    lea rax, [rsp + 8]
+    mov [r8 + 56], rax
 
     mov rax, [rsp]           ; return RIP for resumed task
     mov [r8 + 64], rax
@@ -42,9 +44,19 @@ switch_context:
     mov rax, cr3
     mov [r8 + 80], rax
 
+    mov [r8 + 88], r12
+    mov [r8 + 96], r13
+    mov [r8 + 104], r14
+    mov [r8 + 112], r15
+
     ; Restore CR3 first
     mov rax, [r9 + 80]
     mov cr3, rax
+
+    mov r12, [r9 + 88]
+    mov r13, [r9 + 96]
+    mov r14, [r9 + 104]
+    mov r15, [r9 + 112]
 
     ; Restore general state
     mov rbx, [r9 + 8]

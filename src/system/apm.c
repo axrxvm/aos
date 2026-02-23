@@ -24,6 +24,7 @@ static bool g_apm_initialized = false;
 
 #define APM_AUTOLOAD_MAX_BYTES 4096
 #define APM_V1_MAGIC 0x004D4B41
+#define APM_AUTOLOAD_BACKUP_FILE "/sys/apm/kmodule.autoload.bak"
 
 static int apm_string_has_suffix(const char* str, const char* suffix) {
     if (!str || !suffix) return 0;
@@ -272,6 +273,51 @@ static int apm_write_autoload_entries(char entries[][APM_MAX_NAME_LEN], int coun
 
     vfs_close(fd);
     return 0;
+}
+
+static int apm_backup_autoload_file(void) {
+    int fd = vfs_open(APM_AUTOLOAD_FILE, O_RDONLY);
+    if (fd < 0) {
+        vfs_unlink(APM_AUTOLOAD_BACKUP_FILE);
+        return 0;
+    }
+
+    stat_t st;
+    if (vfs_stat(APM_AUTOLOAD_FILE, &st) < 0 || st.st_size == 0) {
+        vfs_close(fd);
+        vfs_unlink(APM_AUTOLOAD_BACKUP_FILE);
+        return 0;
+    }
+
+    size_t size = st.st_size;
+    if (size > APM_AUTOLOAD_MAX_BYTES) {
+        size = APM_AUTOLOAD_MAX_BYTES;
+    }
+
+    char* data = (char*)kmalloc(size);
+    if (!data) {
+        vfs_close(fd);
+        return -1;
+    }
+
+    int bytes_read = vfs_read(fd, data, size);
+    vfs_close(fd);
+    if (bytes_read < 0) {
+        kfree(data);
+        return -1;
+    }
+
+    int bfd = vfs_open(APM_AUTOLOAD_BACKUP_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+    if (bfd < 0) {
+        kfree(data);
+        return -1;
+    }
+
+    int written = vfs_write(bfd, data, bytes_read);
+    vfs_close(bfd);
+    kfree(data);
+
+    return written == bytes_read ? 0 : -1;
 }
 
 // Simple JSON parsing helpers (minimal asf)
@@ -1204,6 +1250,39 @@ int apm_list_autoload_modules(void) {
         vga_puts("\n");
     }
 
+    return 0;
+}
+
+int apm_disable_all_autoload(const char* reason) {
+    char entries[APM_MAX_MODULES][APM_MAX_NAME_LEN];
+    int count = apm_read_autoload_entries(entries, APM_MAX_MODULES);
+    if (count < 0) {
+        serial_puts("[APM] Failed to read autoload list for rollback\n");
+        return -1;
+    }
+
+    if (count == 0) {
+        serial_puts("[APM] Autoload rollback skipped (no modules configured)\n");
+        return 0;
+    }
+
+    if (apm_backup_autoload_file() != 0) {
+        serial_puts("[APM] Failed to backup autoload list for rollback\n");
+        return -1;
+    }
+
+    if (apm_write_autoload_entries(entries, 0) != 0) {
+        serial_puts("[APM] Failed to disable autoload list during rollback\n");
+        return -1;
+    }
+
+    serial_puts("[APM] Disabled all startup autoload modules");
+    if (reason && reason[0]) {
+        serial_puts(" (");
+        serial_puts(reason);
+        serial_puts(")");
+    }
+    serial_puts("\n");
     return 0;
 }
 

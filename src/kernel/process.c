@@ -430,6 +430,82 @@ pid_t process_create(const char* name, void (*entry_point)(void), int priority) 
     return proc->pid;
 }
 
+pid_t process_create_kernel_thread(const char* name, void (*entry_point)(void), int priority) {
+    process_t* proc = allocate_process();
+    if (!proc) {
+        return -1;
+    }
+
+    if (!name || !*name) {
+        name = "kthread";
+    }
+
+    strncpy(proc->name, name, sizeof(proc->name) - 1);
+    proc->name[sizeof(proc->name) - 1] = '\0';
+    proc->task_type = TASK_TYPE_SERVICE;
+    proc->schedulable = 1;
+    proc->priority = clamp_priority(priority);
+    proc->state = PROCESS_READY;
+    proc->parent_pid = current_process ? current_process->pid : 0;
+    proc->address_space = kernel_address_space;
+    proc->time_slice = time_slices[proc->priority];
+    proc->privilege_level = 0;
+
+    void* kernel_stack_mem = kmalloc(8192);
+    if (!kernel_stack_mem) {
+        proc->state = PROCESS_DEAD;
+        return -1;
+    }
+    proc->kernel_stack = (uintptr_t)kernel_stack_mem + 8192;
+    proc->user_stack = 0;
+
+    proc->context.eip = (uintptr_t)entry_point;
+    proc->context.esp = proc->kernel_stack;
+    proc->context.ebp = proc->kernel_stack;
+#if defined(ARCH_X86_64)
+    /*
+     * switch_context enters new threads via `jmp`, not `call`.
+     * Seed a synthetic return address so entry observes ABI-compatible
+     * stack state (%rsp % 16 == 8 at function entry).
+     */
+    uintptr_t initial_sp = proc->kernel_stack - sizeof(uintptr_t);
+    *((uintptr_t*)initial_sp) = 0;
+    proc->context.esp = initial_sp;
+    proc->context.ebp = initial_sp;
+#endif
+    proc->context.eflags = 0x202;
+#ifdef ARCH_HAS_SEGMENTATION
+    proc->context.cs = arch_get_kernel_code_segment();
+    proc->context.ds = arch_get_kernel_data_segment();
+    proc->context.es = arch_get_kernel_data_segment();
+    proc->context.fs = arch_get_kernel_data_segment();
+    proc->context.gs = arch_get_kernel_data_segment();
+    proc->context.ss = arch_get_kernel_data_segment();
+#endif
+    if (proc->address_space && proc->address_space->page_dir) {
+        proc->context.cr3 = (uintptr_t)proc->address_space->page_dir->physical_addr;
+    }
+
+    sandbox_create(&proc->sandbox, CAGE_NONE);
+    proc->owner_type = OWNER_SYSTEM;
+    proc->owner_id = 0;
+    proc->memory_used = 0;
+    proc->files_open = 0;
+    proc->children_count = 0;
+
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        proc->file_descriptors[i] = -1;
+    }
+
+    if (current_process) {
+        current_process->children_count++;
+        proc->parent = current_process;
+    }
+
+    enqueue_process(proc);
+    return proc->pid;
+}
+
 // Exit current process
 void process_exit(int status) {
     if (!current_process) return;

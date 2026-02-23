@@ -74,6 +74,7 @@ runlevel_t init_get_runlevel(void);
 
 // Register a service
 int init_register_service(service_t* service);
+int init_service_attach_task(const char* service_name, uint32_t tid);
 
 // Start a service by name
 int init_start_service(const char* name);

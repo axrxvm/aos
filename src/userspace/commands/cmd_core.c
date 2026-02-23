@@ -21,6 +21,8 @@
 #include <panic.h>  // For test panic command
 #include <boot_info.h>
 #include <time_subsystem.h>
+#include <bug_report.h>
+#include <bgtask.h>
 
 // Forward declarations
 extern void kprint(const char *str);
@@ -536,6 +538,87 @@ static void cmd_test_panic(const char* args) {
     panic(msg);
 }
 
+static int cmd_bugreport_is_level(const char* value) {
+    if (!value || !*value) return 0;
+    return (strcmp(value, BUG_REPORT_LEVEL_BUG) == 0 ||
+            strcmp(value, BUG_REPORT_LEVEL_CRASH) == 0 ||
+            strcmp(value, BUG_REPORT_LEVEL_ERROR) == 0 ||
+            strcmp(value, BUG_REPORT_LEVEL_INFO) == 0);
+}
+
+static void cmd_bugreport(const char* args) {
+    char level[16];
+    const char* message = NULL;
+
+    if (!args) args = "";
+    while (*args == ' ' || *args == '\t') args++;
+
+    if (strcmp(args, "flush") == 0 || strcmp(args, "--flush") == 0) {
+        int flush_now = bug_report_process_pending();
+        if (flush_now == 0) {
+            vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+            vga_puts("Pending report sent (or nothing pending).\n");
+        } else if (bgtask_queue_report_delivery() == 0) {
+            vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+            vga_puts("Immediate send failed; queued background retry.\n");
+        } else {
+            vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+            vga_puts("Failed to send and failed to queue background retry.\n");
+        }
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        return;
+    }
+
+    if (*args == '\0') {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        vga_puts("Usage: bugreport [flush|bug|crash|error|info] <message>\n");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        return;
+    }
+
+    // Optional first token is level.
+    int i = 0;
+    while (args[i] && args[i] != ' ' && args[i] != '\t' && i < (int)sizeof(level) - 1) {
+        level[i] = args[i];
+        i++;
+    }
+    level[i] = '\0';
+
+    if (cmd_bugreport_is_level(level)) {
+        message = args + i;
+        while (*message == ' ' || *message == '\t') message++;
+    } else {
+        strcpy(level, BUG_REPORT_LEVEL_BUG);
+        message = args;
+    }
+
+    if (!message || !*message) {
+        vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+        vga_puts("bugreport: message is required\n");
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        return;
+    }
+
+    int result = bug_report_submit(level, message, NULL, "source=shell");
+    if (result == 0) {
+        int send_now = bug_report_process_pending();
+        if (send_now == 0) {
+            vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
+            vga_puts("Bug report sent.\n");
+        } else if (bgtask_queue_report_delivery() == 0) {
+            vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+            vga_puts("Bug report queued; immediate send failed, retrying in background.\n");
+        } else {
+            vga_set_color(VGA_ATTR(VGA_COLOR_YELLOW, VGA_COLOR_BLACK));
+            vga_puts("Bug report saved; immediate send failed and background queue unavailable.\n");
+        }
+    } else {
+        vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+        vga_puts("Failed to submit bug report.\n");
+    }
+    vga_set_color(VGA_ATTR(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
 void cmd_module_core_register(void) {
     command_register_with_category("help", "[category]", "Display all available commands organized by category", "System", cmd_help);
     command_register_with_category("version", "", "Display operating system version information", "System", cmd_version);
@@ -551,4 +634,5 @@ void cmd_module_core_register(void) {
     command_register_with_category("shutdown", "[-c] [+seconds|now] [message]", "Power off system (default: 20s, -c: cancel)", "System", cmd_poweroff);
     command_register_with_category("poweroff", "[-c] [+seconds|now] [message]", "Alias for shutdown", "System", cmd_poweroff);
     command_register_with_category("testpanic", "[message]", "Trigger a test panic to demonstrate KRM (WARNING: will crash)", "System", cmd_test_panic);
+    command_register_with_category("bugreport", "[flush|bug|crash|error|info] <message>", "Submit bug/crash report and attempt immediate send (fallback: background retry)", "System", cmd_bugreport);
 }

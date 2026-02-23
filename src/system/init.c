@@ -34,6 +34,8 @@ static init_config_t init_config = {
 static service_t* service_registry[MAX_SERVICES] = {0};
 static uint32_t registered_services = 0;
 
+static service_t* find_service(const char* name);
+
 // Helper function to print init messages
 static void init_log(const char* message) {
     if (init_config.verbose_mode) {
@@ -107,6 +109,16 @@ int init_register_service(service_t* service) {
     snprintf(buf, sizeof(buf), "Registered service: %s", service->name);
     init_log(buf);
     
+    return 0;
+}
+
+int init_service_attach_task(const char* service_name, uint32_t tid) {
+    service_t* service = find_service(service_name);
+    if (!service) {
+        return -1;
+    }
+
+    service->tid = tid;
     return 0;
 }
 

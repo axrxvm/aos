@@ -83,6 +83,9 @@ int apm_set_module_autoload(const char* module_name, bool enabled);
 // List modules configured for startup auto-load
 int apm_list_autoload_modules(void);
 
+// Disable all startup auto-load modules (used by panic recovery rollback)
+int apm_disable_all_autoload(const char* reason);
+
 // Load modules configured for startup auto-load
 int apm_load_startup_modules(void);
 

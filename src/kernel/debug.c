@@ -10,6 +10,7 @@
 
 #include <debug.h>
 #include <krm.h>
+#include <bug_report.h>
 #include <vga.h>
 #include <serial.h>
 #include <stdlib.h> // For itoa
@@ -92,6 +93,9 @@ void panic_screen(registers_t *regs, const char *message, const char *file, uint
     
     panic_guard = 1; // Set guard before doing anything else
 
+    // Best-effort crash capture for boot recovery/reporting.
+    bug_report_capture_panic(regs, message, file, line);
+
     // Send panic info to serial for debugging (before entering KRM)
     serial_puts("\n!!! KERNEL PANIC !!!\n");
     serial_puts("Message: "); serial_puts(message ? message : "(null)"); serial_puts("\n");
@@ -155,6 +159,7 @@ void panic_screen(registers_t *regs, const char *message, const char *file, uint
 
 void panic_msg_loc(const char *message, const char *file, uint32_t line) {
     // Software panic - no register state available
+    bug_report_capture_panic(NULL, message, file, line);
     // Enter KRM directly (does not return)
     krm_enter(NULL, message, file, line);
     

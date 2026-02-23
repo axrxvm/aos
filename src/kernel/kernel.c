@@ -69,6 +69,8 @@
 #include <apm.h>       // For aOS Package Manager (v0.8.5)
 #include <krm.h>       // For Kernel Recovery Mode (v0.8.8)
 #include <abl_boot.h>  // For ABL boot protocol
+#include <bug_report.h> // For bug tracking, crash reports, and rollback recovery
+#include <bgtask.h>    // For asynchronous background tasks
 
 // Simple kernel print function (prints to VGA for now)
 // Ensure vga_puts is available and initialized before kprint is used extensively.
@@ -101,6 +103,7 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     // Initialize Kernel Recovery Mode FIRST - before any other subsystems
     // This ensures KRM is always available if anything goes wrong anywhere
     krm_init();
+    bug_report_set_boot_stage(BUG_BOOT_STAGE_EARLY);
     
     // Initialize CPU-specific features (GDT, segment selectors, etc.)
     arch_cpu_init();
@@ -443,10 +446,30 @@ mount_done:
     fs_layout_init(fs_mode);
     serial_puts("Filesystem layout initialized.\n");
 
+    // Bug/crash reporting starts as soon as persistent storage layout is available.
+    bug_report_init();
+    bug_report_set_boot_stage(BUG_BOOT_STAGE_FS_READY);
+
     // Initialize aOS Package Manager (v0.8.5) - requires filesystem to be ready
     serial_puts("Initializing aOS Package Manager...\n");
     apm_init();
     serial_puts("APM initialized.\n");
+
+    // Recovery and report delivery run after APM init so rollback can edit autoload config.
+    if (bug_report_has_previous_panic()) {
+        serial_puts("[BUG] Previous boot panic detected. Starting recovery...\n");
+        int recovery_result = bug_report_recover_after_panic();
+        if (recovery_result > 0) {
+            serial_puts("[BUG] Rollback applied: startup autoload modules disabled.\n");
+        } else if (recovery_result < 0) {
+            serial_puts("[BUG] Recovery failed to apply rollback.\n");
+        } else {
+            serial_puts("[BUG] Recovery completed without rollback changes.\n");
+        }
+    }
+    if (bgtask_queue_report_delivery() != 0) {
+        serial_puts("[BUG] Failed to queue pending report for background delivery.\n");
+    }
 
     // Mount virtual filesystems for devices and process data
     devfs_init();
@@ -556,6 +579,7 @@ mount_done:
     serial_puts("Kernel module system initialized.\n");
     register_component_task("subsystem.kmodule", TASK_TYPE_SUBSYSTEM, PRIORITY_HIGH);
 
+    bug_report_set_boot_stage(BUG_BOOT_STAGE_APM_MODULES);
     serial_puts("Loading startup kernel modules from APM...\n");
     if (apm_load_startup_modules() == 0) {
         serial_puts("Startup kernel modules loaded.\n");
@@ -584,10 +608,14 @@ mount_done:
     // ================================================================
     serial_puts("\n=== Kernel Initialization Complete ===\n");
     serial_puts("Kernel is now idle. Launching userspace...\n\n");
-    
+
     // Initialize userspace subsystems (command registry, shell, etc.)
+    bug_report_set_boot_stage(BUG_BOOT_STAGE_USERSPACE);
     register_component_task("subsystem.userspace", TASK_TYPE_SUBSYSTEM, PRIORITY_NORMAL);
     userspace_init();
+
+    // Boot reached steady state; clear panic marker for next reboot.
+    bug_report_boot_success();
     
     // Launch userspace shell (TODO: should be a separate process)
     userspace_run();

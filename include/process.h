@@ -72,6 +72,11 @@ typedef struct {
     uint64_t eip;
     uint64_t eflags;
     uint64_t cr3;           // Page table root physical address
+    /*
+     * Callee-saved registers in SysV x86_64 ABI that must survive
+     * function calls and therefore context switches.
+     */
+    uint64_t r12, r13, r14, r15;
 #else
     uint32_t eax, ebx, ecx, edx;
     uint32_t esi, edi, ebp, esp;
@@ -126,6 +131,7 @@ void init_process_manager(void);
 
 // Process lifecycle
 pid_t process_create(const char* name, void (*entry_point)(void), int priority);
+pid_t process_create_kernel_thread(const char* name, void (*entry_point)(void), int priority);
 pid_t process_register_kernel_task(const char* name, task_type_t type, int priority);
 int process_finish_kernel_task(pid_t pid, int status);
 int process_mark_task_state(pid_t pid, process_state_t state);
