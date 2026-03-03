@@ -15,6 +15,13 @@
 #include <stdlib.h>
 #include <vmm.h>
 
+/*
+ * RSA primitives with PKCS#1 v1.5 style operations.
+ *
+ * Includes software DRBG with optional RDRAND mixing for randomness used by
+ * padding/keygen helpers and public/private RSA operations.
+ */
+
 static uint8_t rsa_drbg_state[SHA256_DIGEST_SIZE];
 static uint64_t rsa_drbg_counter = 0;
 static int rsa_drbg_seeded = 0;
@@ -44,6 +51,7 @@ static int rsa_rdrand32(uint32_t* out) {
 #endif
 
 static void rsa_drbg_seed(void) {
+    /* Seed software DRBG from timer/address entropy and optional RDRAND input. */
     uint8_t seed_material[64];
     memset(seed_material, 0, sizeof(seed_material));
 
@@ -75,6 +83,7 @@ static void rsa_drbg_seed(void) {
 }
 
 static int rsa_drbg_generate(uint8_t* out, size_t len) {
+    /* Expand DRBG state into arbitrary-length pseudorandom byte stream. */
     if (!out) {
         return -1;
     }
@@ -108,6 +117,7 @@ static int rsa_drbg_generate(uint8_t* out, size_t len) {
 }
 
 static int rsa_random_bytes(uint8_t* out, size_t len) {
+    /* Produce random bytes using hardware RNG when available, else DRBG. */
     if (!out) {
         return -1;
     }
@@ -158,6 +168,7 @@ static int rsa_random_bytes(uint8_t* out, size_t len) {
 }
 
 static int rsa_random_nonzero_bytes(uint8_t* out, size_t len) {
+    /* Produce non-zero random bytes for PKCS#1 padding fields. */
     size_t written = 0;
     while (written < len) {
         uint8_t byte = 0;
@@ -175,6 +186,7 @@ static int rsa_random_nonzero_bytes(uint8_t* out, size_t len) {
 void rsa_public_key_init(rsa_public_key_t* key, 
                          const uint8_t* modulus, uint32_t modulus_len,
                          const uint8_t* exponent, uint32_t exponent_len) {
+    /* Initialize RSA public key structure from big-endian key components. */
     bigint_from_bytes(&key->modulus, modulus, modulus_len);
     bigint_from_bytes(&key->exponent, exponent, exponent_len);
     key->key_size = modulus_len;

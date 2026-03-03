@@ -29,6 +29,16 @@
 
 #include <util.h>
 
+/*
+ * SimpleFS driver implementation.
+ *
+ * Architectural model:
+ * - Block/inode bitmap allocator over ATA-backed sectors
+ * - VFS vnode adapter (`simplefs_vnode_ops`) for POSIX-like operations
+ * - Direct + indirect block addressing for scalable file sizes
+ * - Local ownership/permission metadata integrated with aOS fileperm model
+ */
+
 
 // Forward declarations
 static int simplefs_vnode_open(vnode_t* node, uint32_t flags);
@@ -90,6 +100,7 @@ static filesystem_t simplefs_filesystem = {
 };
 
 static uint32_t simplefs_parse_source_lba(const char* source) {
+    /* Parse mount source hints like `lba=12345`/`lba:12345`. */
     if (!source || !*source) {
         return 0;
     }
@@ -116,6 +127,7 @@ static uint32_t simplefs_parse_source_lba(const char* source) {
 
 // Get current time (placeholder - returns 0 until we have a real-time clock)
 static uint32_t get_current_time(void) {
+    /* Placeholder monotonic stamp until RTC-backed wall-clock integration. */
     // TODO: Implement RTC driver to get actual time
     // For now, return a monotonic counter or 0
     static uint32_t counter = 0;
@@ -124,6 +136,7 @@ static uint32_t get_current_time(void) {
 
 // Calculate simple checksum for data
 static uint32_t calculate_checksum(const uint8_t* data, uint32_t size) {
+    /* Lightweight checksum for metadata/data integrity verification. */
     uint32_t checksum = 0;
     for (uint32_t i = 0; i < size; i++) {
         checksum += data[i];
@@ -133,6 +146,7 @@ static uint32_t calculate_checksum(const uint8_t* data, uint32_t size) {
 }
 
 static int read_block(simplefs_data_t* fs_data, uint32_t block_num, void* buffer) {
+    /* Read one filesystem block mapped to underlying ATA sector LBA. */
     if (!fs_data || !buffer) {
         // serial_puts("SimpleFS: read_block - null pointer\n");
         return -1;
@@ -151,6 +165,7 @@ static int read_block(simplefs_data_t* fs_data, uint32_t block_num, void* buffer
 }
 
 static int write_block(simplefs_data_t* fs_data, uint32_t block_num, const void* buffer) {
+    /* Write one filesystem block mapped to underlying ATA sector LBA. */
     if (!fs_data || !buffer) {
         // serial_puts("SimpleFS: write_block - null pointer\n");
         return -1;

@@ -18,6 +18,13 @@
 #include <string.h>
 #include <vmm.h>
 
+/*
+ * HMAC primitives.
+ *
+ * Includes HMAC-SHA256 and compact SHA1-based support paths used by legacy
+ * protocol suites and TLS cipher variants.
+ */
+
 #define SHA1_DIGEST_SIZE 20
 #define SHA1_BLOCK_SIZE 64
 
@@ -29,6 +36,7 @@ typedef struct {
 } sha1_ctx_t;
 
 static void sha1_transform(uint32_t state[5], const uint8_t buffer[64]) {
+    /* Process one SHA-1 block for internal HMAC-SHA1 support. */
     uint32_t a, b, c, d, e;
     uint32_t w[80];
     
@@ -81,6 +89,7 @@ static void sha1_transform(uint32_t state[5], const uint8_t buffer[64]) {
 }
 
 static void sha1_init(sha1_ctx_t* ctx) {
+    /* Initialize SHA-1 context with standard initial state. */
     ctx->state[0] = 0x67452301;
     ctx->state[1] = 0xEFCDAB89;
     ctx->state[2] = 0x98BADCFE;
@@ -137,6 +146,7 @@ static void sha1_final(sha1_ctx_t* ctx, uint8_t* digest) {
 void hmac_sha256(const uint8_t* key, size_t key_len,
                  const uint8_t* data, size_t data_len,
                  uint8_t* output) {
+    /* Compute RFC2104 HMAC with SHA-256 digest function. */
     uint8_t k_pad[SHA256_BLOCK_SIZE];
     uint8_t temp_key[SHA256_DIGEST_SIZE];
     const uint8_t* actual_key;

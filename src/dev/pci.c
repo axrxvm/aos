@@ -14,12 +14,20 @@
 #include <stdlib.h>
 #include <vmm.h>
 
+/*
+ * PCI discovery and config-space access layer.
+ *
+ * Enumerates devices via legacy config ports (0xCF8/0xCFC) and stores a
+ * bounded in-memory inventory for driver probing/attachment.
+ */
+
 #define MAX_PCI_DEVICES 32
 
 static pci_device_t pci_devices[MAX_PCI_DEVICES];
 static int pci_device_count = 0;
 
 uint32_t pci_read_config(uint8_t bus, uint8_t device, uint8_t function, uint8_t offset) {
+    /* Read 32-bit value from PCI configuration space. */
     uint32_t address = (uint32_t)((bus << 16) | (device << 11) | 
                                   (function << 8) | (offset & 0xFC) | 0x80000000);
     outl(PCI_CONFIG_ADDRESS, address);
@@ -27,6 +35,7 @@ uint32_t pci_read_config(uint8_t bus, uint8_t device, uint8_t function, uint8_t 
 }
 
 void pci_write_config(uint8_t bus, uint8_t device, uint8_t function, uint8_t offset, uint32_t value) {
+    /* Write 32-bit value to PCI configuration space. */
     uint32_t address = (uint32_t)((bus << 16) | (device << 11) | 
                                   (function << 8) | (offset & 0xFC) | 0x80000000);
     outl(PCI_CONFIG_ADDRESS, address);
@@ -51,6 +60,7 @@ void pci_write_config_word(uint8_t bus, uint8_t device, uint8_t function, uint8_
 }
 
 int pci_scan_bus(void) {
+    /* Enumerate reachable PCI functions and populate local device cache. */
     pci_device_count = 0;
     
     // Only scan bus 0 for now (most devices are on bus 0)
@@ -111,6 +121,7 @@ pci_device_t* pci_find_device(uint16_t vendor_id, uint16_t device_id) {
 }
 
 void pci_init(void) {
+    /* Bootstrap PCI subsystem and emit enumeration count. */
     serial_puts("Initializing PCI subsystem...\n");
     int count = pci_scan_bus();
     serial_puts("PCI: Found ");

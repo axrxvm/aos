@@ -21,6 +21,13 @@
 #include <time_subsystem.h>
 #include <bgtask.h>
 
+/*
+ * Built-in init service registry.
+ *
+ * Declares default service start/stop hooks and binds them into the core init
+ * runlevel manager.
+ */
+
 // Storage for built-in services
 static service_t builtin_services[16];
 static uint32_t builtin_service_count = 0;
@@ -94,6 +101,7 @@ static void service_network_stop(void) {
 
 // Time synchronization service
 static void service_timesync_start(void) {
+    /* Queue asynchronous time synchronization task at service start. */
     serial_puts("Time sync service started\n");
     if (bgtask_queue_timesync() == 0) {
         serial_puts("Time sync service: queued background synchronization\n");
@@ -108,6 +116,7 @@ static void service_timesync_stop(void) {
 
 // Background task service
 static void service_bgtask_start(void) {
+    /* Launch background task worker and attach task identity to init service. */
     int pid = bgtask_service_start();
     if (pid > 0) {
         init_service_attach_task("bgtask", (uint32_t)pid);
@@ -129,6 +138,7 @@ static void service_bgtask_stop(void) {
 // Execute an init.d style service script
 // In a real filesystem implementation, this would load and parse shell scripts
 int init_script_exec(const char* script_name, service_operation_t operation) {
+    /* Placeholder init.d script execution path (existence check + TODO hook). */
     (void)operation;  // Suppress unused parameter warning
     
     char script_path[256];
@@ -188,6 +198,7 @@ int init_register_builtin_service(const char* name,
                                   void (*start_fn)(void),
                                   void (*stop_fn)(void),
                                   bool auto_restart) {
+    /* Register one statically-described service into init system registry. */
     if (builtin_service_count >= 16) {
         serial_puts("[INIT] Too many built-in services\n");
         return -1;
@@ -214,6 +225,7 @@ int init_register_builtin_service(const char* name,
 
 // Initialize default system services
 void init_default_services(void) {
+    /* Register baseline boot and multi-user services provided by aOS core. */
     serial_puts("[INIT] Registering default system services...\n");
     
     // Critical boot-time services (runlevel 0 - BOOT)

@@ -87,6 +87,13 @@ extern uint8_t __kernel_start;
 extern uint8_t __kernel_end;
 
 static void register_component_task(const char* name, task_type_t type, int priority) {
+    /*
+     * Register a non-schedulable bookkeeping task entry for observability.
+     *
+     * These entries appear in process/task listings so operators can inspect
+     * subsystem lifecycle and ownership, even when the component does not run
+     * as a standalone schedulable execution context.
+     */
     pid_t tid = process_register_kernel_task(name, type, priority);
     if (tid > 0) {
         serial_puts("[TASK] Registered ");
@@ -100,6 +107,21 @@ static void register_component_task(const char* name, task_type_t type, int prio
 }
 
 void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
+    /*
+     * aOS kernel bootstrap sequence (single-threaded early boot):
+     *
+     *  1. Bring up fail-safe recovery/diagnostics (KRM + bug reporting)
+     *  2. Initialize CPU/interrupt primitives and early I/O drivers
+     *  3. Validate boot protocol payload and discover physical memory
+     *  4. Initialize PMM + paging + VMM (memory ownership boundary)
+     *  5. Initialize buses/devices, networking, filesystems, and storage
+     *  6. Initialize process/syscall/IPC/security/module/init subsystems
+     *  7. Transition into userspace shell bootstrap (ring 3) when available
+     *
+     * Ordering is intentional: later subsystems assume memory manager and core
+     * interrupt/timer facilities are already active and stable.
+     */
+
     // Initialize Kernel Recovery Mode FIRST - before any other subsystems
     // This ensures KRM is always available if anything goes wrong anywhere
     krm_init();

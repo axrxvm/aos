@@ -16,6 +16,16 @@
 
 #include <stdint.h>
 
+/*
+ * Shell architecture notes:
+ *
+ * - This file is freestanding userspace code (no libc).
+ * - All services (TTY, auth, VFS, command execution) are accessed through
+ *   syscall wrappers defined below.
+ * - Utility helpers (`u_*`) form a thin userspace portability layer used by
+ *   command parsing, history, editor, and file operations in this binary.
+ */
+
  /* SYSCALL NUMBERS
  * (must match kernel include/syscall.h)
  */
@@ -88,6 +98,7 @@ typedef struct {
 */
 
 static inline intptr_t syscall0(intptr_t num) {
+    /* Raw INT 0x80 gateway with 0 arguments. */
     intptr_t ret;
     __asm__ volatile (
         "int $0x80"
@@ -99,6 +110,7 @@ static inline intptr_t syscall0(intptr_t num) {
 }
 
 static inline intptr_t syscall1(intptr_t num, intptr_t arg1) {
+    /* Raw INT 0x80 gateway with 1 argument (eax=num, ebx=arg1). */
     intptr_t ret;
     __asm__ volatile (
         "int $0x80"
@@ -110,6 +122,7 @@ static inline intptr_t syscall1(intptr_t num, intptr_t arg1) {
 }
 
 static inline intptr_t syscall2(intptr_t num, intptr_t arg1, intptr_t arg2) {
+    /* Raw INT 0x80 gateway with 2 arguments (eax, ebx, ecx). */
     intptr_t ret;
     __asm__ volatile (
         "int $0x80"
@@ -121,6 +134,7 @@ static inline intptr_t syscall2(intptr_t num, intptr_t arg1, intptr_t arg2) {
 }
 
 static inline intptr_t syscall3(intptr_t num, intptr_t arg1, intptr_t arg2, intptr_t arg3) {
+    /* Raw INT 0x80 gateway with 3 arguments (eax, ebx, ecx, edx). */
     intptr_t ret;
     __asm__ volatile (
         "int $0x80"

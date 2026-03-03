@@ -25,6 +25,15 @@
 #include <serial.h>
 #include <arch/pit.h>
 
+/*
+ * IPv4 network layer.
+ *
+ * Responsibilities:
+ * - validate/dispatch inbound IP packets to ICMP/TCP/UDP handlers
+ * - build outbound IPv4 packets and route to next-hop interface
+ * - queue pending packets while ARP resolution is in progress
+ */
+
 // IP packet ID counter
 static uint16_t ip_id_counter = 1;
 
@@ -50,6 +59,7 @@ typedef struct {
 static pending_packet_t pending_packets[MAX_PENDING_PACKETS];
 
 void ipv4_init(void) {
+    /* Reset IPv4 layer state and pending ARP-resolution transmit queue. */
     serial_puts("Initializing IPv4...\n");
     
     // Clear pending packet queue
@@ -63,6 +73,7 @@ void ipv4_init(void) {
 
 
 int ipv4_receive(net_interface_t* iface, net_packet_t* packet) {
+    /* Validate IPv4 header + destination and dispatch payload by L4 protocol. */
     if (!packet || packet->len < IPV4_HEADER_LEN) {
         return -1;
     }
@@ -129,6 +140,7 @@ int ipv4_receive(net_interface_t* iface, net_packet_t* packet) {
 static int ipv4_send_internal(net_interface_t* iface, uint32_t dest_ip,
                                const mac_addr_t* dest_mac, 
                                const uint8_t* packet_data, uint32_t total_len) {
+    /* Send fully prepared IPv4 frame once destination MAC is known. */
     (void)dest_ip;
     int ret;
     
@@ -148,6 +160,7 @@ static int ipv4_send_internal(net_interface_t* iface, uint32_t dest_ip,
 // Queue a packet for later transmission after ARP resolves
 static int ipv4_queue_packet(net_interface_t* iface, uint32_t dest_ip, 
                               uint32_t gateway_ip, const uint8_t* data, uint32_t len) {
+    /* Queue outbound packet while awaiting ARP resolution for next hop. */
     // Find free slot
     for (int i = 0; i < MAX_PENDING_PACKETS; i++) {
         if (!pending_packets[i].valid) {

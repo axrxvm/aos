@@ -19,13 +19,22 @@
 #include <arch/pit.h>
 #include <fs/vfs.h>
 
+/*
+ * FTP client subsystem.
+ *
+ * Manages control-channel command/response flow and data transfer sessions,
+ * with DNS resolution and TCP transport integration.
+ */
+
 void ftp_init(void) {
+    /* Initialize FTP client subsystem (stateless bootstrap). */
     serial_puts("Initializing FTP client...\n");
     serial_puts("FTP client initialized.\n");
 }
 
 // Create FTP session
 ftp_session_t* ftp_session_create(void) {
+    /* Allocate and initialize a new FTP session object. */
     ftp_session_t* session = (ftp_session_t*)kmalloc(sizeof(ftp_session_t));
     if (session) {
         memset(session, 0, sizeof(ftp_session_t));
@@ -48,6 +57,7 @@ void ftp_session_free(ftp_session_t* session) {
 
 // Wait for TCP connection to establish
 static int ftp_wait_connected(tcp_socket_t* sock, uint32_t timeout_ms) {
+    /* Busy-wait with timeout for TCP control/data socket establishment. */
     uint32_t start = get_tick_count();
     while ((get_tick_count() - start) < timeout_ms) {
         if (sock->state == TCP_ESTABLISHED) {
@@ -60,6 +70,7 @@ static int ftp_wait_connected(tcp_socket_t* sock, uint32_t timeout_ms) {
 
 // Read reply from FTP server
 int ftp_read_reply(ftp_session_t* session) {
+    /* Read and parse FTP server reply, including multiline reply forms. */
     if (!session || !session->control_socket) {
         return -1;
     }
@@ -128,6 +139,7 @@ int ftp_read_reply(ftp_session_t* session) {
 
 // Send FTP command
 int ftp_send_command(ftp_session_t* session, const char* cmd, const char* arg) {
+    /* Serialize and send FTP command line (`CMD [arg]\r\n`). */
     if (!session || !session->control_socket || !cmd) {
         return -1;
     }
@@ -166,6 +178,7 @@ int ftp_send_command(ftp_session_t* session, const char* cmd, const char* arg) {
 
 // Connect to FTP server
 int ftp_connect(ftp_session_t* session, const char* host, uint16_t port) {
+    /* Resolve host and establish FTP control channel TCP connection. */
     if (!session || !host) {
         return -1;
     }

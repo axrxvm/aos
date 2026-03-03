@@ -8,6 +8,15 @@
  */
 
 /*
+ * DEVELOPER_NOTE_BLOCK
+ * Module Overview:
+ * - This file is part of the aOS production kernel/userspace codebase.
+ * - Review public symbols in this unit to understand contracts with adjacent modules.
+ * - Keep behavior-focused comments near non-obvious invariants, state transitions, and safety checks.
+ * - Avoid changing ABI/data-layout assumptions without updating dependent modules.
+ */
+
+/*
  * x86_64 enter_usermode() is implemented in pure NASM assembly at:
  *   src/arch/x86_64/usermode_asm.s
  */

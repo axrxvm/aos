@@ -14,6 +14,13 @@
 #include <stdlib.h>
 #include <io.h>
 
+/*
+ * x86_64 interrupt dispatch core.
+ *
+ * Routes exception/IRQ frames to registered handlers and escalates unhandled
+ * CPU exceptions through panic diagnostics.
+ */
+
 static isr_t interrupt_handlers[256];
 
 static const char* exception_messages[] = {
@@ -28,6 +35,7 @@ static const char* exception_messages[] = {
 };
 
 void isr_handler_common(registers_t* regs) {
+    /* Dispatch exception/software interrupt to handler or panic on miss. */
     if (regs->int_no < 256 && interrupt_handlers[regs->int_no] != 0) {
         isr_t handler = interrupt_handlers[regs->int_no];
         handler(regs);
@@ -48,6 +56,7 @@ void isr_handler_common(registers_t* regs) {
 }
 
 void irq_handler_common(registers_t* regs) {
+    /* Send PIC EOIs then dispatch corresponding IRQ handler if installed. */
     if (regs->int_no >= 40 && regs->int_no <= 47) {
         outb(PIC2_COMMAND, PIC_EOI);
     }
@@ -60,6 +69,7 @@ void irq_handler_common(registers_t* regs) {
 }
 
 void register_interrupt_handler(uint8_t n, isr_t handler) {
+    /* Register/replace interrupt callback for vector index `n`. */
     interrupt_handlers[n] = handler;
     serial_puts("Registered INT ");
     char n_str[5];

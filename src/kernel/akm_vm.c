@@ -23,6 +23,15 @@
 #include <user.h>
 #include <fileperm.h>
 
+/*
+ * AKM VM runtime contract:
+ *
+ * - Executes stack-based AKM bytecode for kernel module commands/hooks.
+ * - Uses `kmod_ctx_t` capability policy to gate host API access.
+ * - Maintains per-VM resource registry (`vm_registry_t`) for safe teardown of
+ *   module-owned objects on unload/failure paths.
+ */
+
 /* Forward declarations for kernel functions - avoid header conflicts */
 extern void* kmalloc(size_t size);
 extern void kfree(void* ptr);
@@ -72,6 +81,7 @@ typedef struct {
 
 /* Safely get or create registry for a VM - returns NULL on failure */
 static vm_registry_t* get_vm_registry(akm_vm_t* vm) {
+    /* Lazily allocate per-VM registry in context private storage. */
     if (!vm) return 0;
     if (!vm->ctx) return 0;
     if (!vm->ctx->_private) {
@@ -85,6 +95,7 @@ static vm_registry_t* get_vm_registry(akm_vm_t* vm) {
 
 /* Cleanup registry on unload */
 void akm_vm_cleanup_registry(akm_vm_t* vm) {
+    /* Release per-VM registry allocated through get_vm_registry(). */
     if (!vm || !vm->ctx || !vm->ctx->_private) return;
     kfree(vm->ctx->_private);
     vm->ctx->_private = 0;
@@ -96,6 +107,7 @@ void akm_vm_cleanup_registry(akm_vm_t* vm) {
  * Read 32-bit little-endian value from code - with null check
  */
 static uint32_t read_u32(akm_vm_t* vm) {
+    /* Decode little-endian immediate with bounds checking against code_size. */
     if (!vm || !vm->code) return 0;
     if (vm->pc + 4 > vm->code_size) {
         vm->flags |= AKM_VM_ERROR;
@@ -115,6 +127,7 @@ static uint32_t read_u32(akm_vm_t* vm) {
  * Read 8-bit value from code - with null check
  */
 static uint8_t read_u8(akm_vm_t* vm) {
+    /* Decode single-byte immediate with PC bounds validation. */
     if (!vm || !vm->code) return 0;
     if (vm->pc >= vm->code_size) {
         vm->flags |= AKM_VM_ERROR;
@@ -127,6 +140,7 @@ static uint8_t read_u8(akm_vm_t* vm) {
 //                          STACK OPERATIONS
 
 int akm_vm_push(akm_vm_t* vm, int32_t value) {
+    /* Push operand onto VM stack; sets VM error on overflow. */
     if (!vm) return -1;
     if (vm->sp >= AKM_VM_STACK_SIZE) {
         vm->flags |= AKM_VM_ERROR;
@@ -138,6 +152,7 @@ int akm_vm_push(akm_vm_t* vm, int32_t value) {
 }
 
 int32_t akm_vm_pop(akm_vm_t* vm) {
+    /* Pop operand from VM stack; sets VM error on underflow. */
     if (!vm) return 0;
     if (vm->sp == 0) {
         vm->flags |= AKM_VM_ERROR;
@@ -163,6 +178,7 @@ static int32_t peek(akm_vm_t* vm) {
  * Execute an API call - comprehensive implementation with safety checks
  */
 static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
+    /* Route AKM API opcode to host capability-checked kernel service entry. */
     if (!vm) return AKM_VM_ERR_API;
     
     kmod_ctx_t* ctx = vm->ctx;

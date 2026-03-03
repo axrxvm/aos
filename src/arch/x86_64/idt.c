@@ -10,6 +10,13 @@
 #include <arch/x86_64/idt.h>
 #include <serial.h>
 
+/*
+ * x86_64 IDT setup.
+ *
+ * Programs gate descriptors for exceptions/IRQs and exposes INT 0x80 syscall
+ * gate with user-callable privilege level.
+ */
+
 #define IDT_ENTRIES 256
 #define KERNEL_CS   0x08
 
@@ -17,6 +24,7 @@ static idt_entry_t idt_entries[IDT_ENTRIES];
 static idt_ptr_t idt_ptr;
 
 static void idt_set_gate(uint8_t num, uint64_t base, uint8_t flags) {
+    /* Populate one 64-bit IDT entry from handler address and attributes. */
     idt_entries[num].offset_low = (uint16_t)(base & 0xFFFF);
     idt_entries[num].selector = KERNEL_CS;
     idt_entries[num].ist = 0;
@@ -27,6 +35,7 @@ static void idt_set_gate(uint8_t num, uint64_t base, uint8_t flags) {
 }
 
 void init_idt(void) {
+    /* Initialize IDT entries and load IDTR register. */
     idt_ptr.limit = (sizeof(idt_entry_t) * IDT_ENTRIES) - 1;
     idt_ptr.base = (uint64_t)&idt_entries;
 

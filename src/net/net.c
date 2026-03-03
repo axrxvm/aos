@@ -16,6 +16,14 @@
 #include <serial.h>
 #include <panic.h>
 
+/*
+ * Core networking runtime state.
+ *
+ * This file provides the base interface registry and packet lifecycle helpers
+ * used by higher layers (ARP/IPv4/TCP/etc.) and hardware drivers (e1000/pcnet).
+ * Protocol logic lives in per-protocol files; this unit owns common plumbing.
+ */
+
 // Network interface table
 static net_interface_t* net_interfaces[MAX_NET_INTERFACES];
 static int net_interface_count_val = 0;
@@ -24,6 +32,10 @@ static int net_interface_count_val = 0;
 static char ip_string_buffer[16];
 
 void net_init(void) {
+    /*
+     * Reset in-memory network state for cold boot.
+     * Driver probing and protocol init occur later in kernel_main().
+     */
     serial_puts("Initializing networking subsystem...\n");
     
     // Initialize interface table
@@ -35,6 +47,12 @@ void net_init(void) {
 }
 
 net_interface_t* net_interface_register(const char* name) {
+    /*
+     * Register a NIC-facing interface object.
+     *
+     * Drivers attach callbacks (transmit/receive) and link-layer metadata to
+     * this object after registration.
+     */
     if (net_interface_count_val >= MAX_NET_INTERFACES) {
         serial_puts("Error: Maximum network interfaces reached\n");
         return NULL;
@@ -145,6 +163,12 @@ void net_packet_free(net_packet_t* packet) {
 }
 
 int net_transmit_packet(net_interface_t* iface, net_packet_t* packet) {
+    /*
+     * Common TX path wrapper:
+     * - validates link state
+     * - dispatches to driver callback
+     * - updates per-interface accounting counters
+     */
     if (!iface || !packet) return -1;
     
     if (!(iface->flags & IFF_UP)) {
@@ -167,6 +191,12 @@ int net_transmit_packet(net_interface_t* iface, net_packet_t* packet) {
 }
 
 int net_receive_packet(net_interface_t* iface, net_packet_t* packet) {
+    /*
+     * Common RX ingress path wrapper.
+     *
+     * Drivers feed received packets here so accounting and optional receive
+     * callback dispatch stay consistent across hardware implementations.
+     */
     if (!iface || !packet) return -1;
     
     if (!(iface->flags & IFF_UP)) {
@@ -227,6 +257,10 @@ uint32_t string_to_ip(const char* str) {
 
 // Network polling - call this regularly to process incoming packets
 void net_poll(void) {
+    /*
+     * Cooperative polling loop used when interrupt-driven networking is not
+     * yet fully wired or when running in simplified emulation setups.
+     */
     // Poll hardware for incoming packets (both drivers)
     extern void e1000_handle_interrupt(void);
     extern void pcnet_handle_interrupt(void);

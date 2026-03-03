@@ -31,6 +31,13 @@
 #include <serial.h>
 #include <arch/pit.h>
 
+/*
+ * TLS 1.2 client engine.
+ *
+ * Implements handshake orchestration, PRF/key-derivation, record protection,
+ * and encrypted payload transport over established TCP sockets.
+ */
+
 #define TLS_RECV_BUFFER_SIZE    16384
 #define TLS_MAX_RECORD_SIZE     16384
 #define TLS_HANDSHAKE_TIMEOUT   15000
@@ -39,6 +46,7 @@
 static uint32_t random_seed = 0x12345678;
 
 static void init_random(void) {
+    /* Seed PRNG from tick source for non-cryptographic session entropy mixing. */
     random_seed ^= get_tick_count();
 }
 
@@ -48,6 +56,7 @@ static uint32_t random_next(void) {
 }
 
 void tls_random_bytes(uint8_t* buffer, uint32_t len) {
+    /* Fill buffer with pseudo-random bytes from internal generator. */
     for (uint32_t i = 0; i < len; i++) {
         if (i % 4 == 0) {
             random_next();
@@ -64,6 +73,7 @@ static void tls_prf_p_hash(const uint8_t* secret, size_t secret_len,
                            const uint8_t* seed, size_t seed_len,
                            uint8_t* output, size_t output_len,
                            int use_sha256) {
+    /* Generic TLS P_hash routine used by TLS 1.2 PRF expansion. */
     uint8_t a[32];  // A(i) - max size for SHA256
     uint8_t temp[32 + 64];  // HMAC output + seed
     size_t hash_len = use_sha256 ? 32 : 20;
@@ -107,6 +117,7 @@ static void tls_prf(const uint8_t* secret, size_t secret_len,
                     const char* label,
                     const uint8_t* seed, size_t seed_len,
                     uint8_t* output, size_t output_len) {
+    /* TLS 1.2 PRF(label || seed) wrapper using SHA-256. */
     // TLS 1.2 PRF uses only SHA-256 based P_hash
     uint8_t full_seed[128];
     size_t label_len = strlen(label);
@@ -119,6 +130,7 @@ static void tls_prf(const uint8_t* secret, size_t secret_len,
 }
 
 static void derive_keys(tls_session_t* session) {
+    /* Derive master secret + traffic keys from negotiated handshake material. */
     // Derive master secret from pre-master secret
     uint8_t seed[64];
     memcpy(seed, session->client_random, 32);
@@ -176,6 +188,7 @@ static void derive_keys(tls_session_t* session) {
 
 
 void tls_init(void) {
+    /* Initialize TLS subsystem and entropy seed state. */
     serial_puts("Initializing TLS...\n");
     init_random();
     serial_puts("TLS initialized (simplified TLS 1.2 client)\n");

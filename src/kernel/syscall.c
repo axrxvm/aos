@@ -28,6 +28,16 @@
 #include <stdlib.h>
 #include <limits.h>
 
+/*
+ * Syscall subsystem notes:
+ *
+ * - Entry path is architecture-specific (`int 0x80` on current userspace ABI).
+ * - This file performs argument normalization/validation and dispatches into
+ *   kernel subsystems (VFS, process manager, user/session, device helpers).
+ * - Handlers return `intptr_t` to support pointer/int return semantics over a
+ *   single ABI register return channel.
+ */
+
 // Forward declaration for process functions
 extern void process_exit(int status);
 extern int process_fork(void);
@@ -43,6 +53,11 @@ extern volatile uint32_t shutdown_message_last_tick;
 extern void kprint(const char *str);
 
 static void syscall_check_scheduled_shutdown(void) {
+    /*
+     * Cooperative deferred shutdown notifier used by shell/syscall paths.
+     * Emits countdown messages at selected checkpoints and calls ACPI poweroff
+     * once the scheduled tick threshold is reached.
+     */
     if (shutdown_scheduled_tick == 0) {
         return;
     }
@@ -90,6 +105,7 @@ static void syscall_check_scheduled_shutdown(void) {
 typedef intptr_t (*syscall_handler_t)(uintptr_t, uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 
 static int syscall_to_u32(uintptr_t value, uint32_t* out) {
+    /* Strict narrowing helper to prevent silent truncation in ABI conversion. */
     if (!out || value > UINT32_MAX) {
         return -1;
     }
@@ -98,6 +114,7 @@ static int syscall_to_u32(uintptr_t value, uint32_t* out) {
 }
 
 static int syscall_to_int(uintptr_t value, int* out) {
+    /* Signed-range checked conversion helper for syscall arguments. */
     if (!out) {
         return -1;
     }

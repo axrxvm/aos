@@ -29,6 +29,13 @@
 #include <vmm.h>
 #include <stdlib.h>
 
+/*
+ * AMD PCnet NIC driver.
+ *
+ * Handles PCI-discovered PCnet adapters using CSR/BCR register interfaces and
+ * DMA descriptor rings for packet RX/TX operations.
+ */
+
 // PCnet Device State
 static uint16_t io_base = 0;
 static pcnet_type_t device_type = PCNET_TYPE_UNKNOWN;
@@ -58,11 +65,13 @@ static uint32_t rx_packets = 0;
 // I/O Access Functions
 
 static inline uint16_t pcnet_read_csr16(uint8_t csr) {
+    /* Read 16-bit Control/Status Register. */
     outw(io_base + PCNET_IO_RAP, csr);
     return inw(io_base + PCNET_IO_RDP);
 }
 
 static inline void pcnet_write_csr16(uint8_t csr, uint16_t value) {
+    /* Write 16-bit Control/Status Register. */
     outw(io_base + PCNET_IO_RAP, csr);
     outw(io_base + PCNET_IO_RDP, value);
 }
@@ -100,6 +109,7 @@ static inline void pcnet_write_bcr32(uint8_t bcr, uint32_t value) {
 // Device Reset
 
 static void pcnet_reset(void) {
+    /* Hardware reset sequence via reset register side effect. */
     // Reading from the reset register triggers a reset (16-bit mode)
     inw(io_base + PCNET_IO_RESET);
     // Small delay for reset to complete
@@ -112,6 +122,7 @@ static void pcnet_reset(void) {
 // MAC Address Functions
 
 static void pcnet_read_mac_address(mac_addr_t* mac) {
+    /* Read station MAC from APROM byte registers. */
     // MAC address is stored in the APROM (Address PROM)
     // MUST use byte-wide reads at offsets 0x00-0x05
     // The APROM is accessible after a reset in 16-bit I/O mode
@@ -128,6 +139,7 @@ static void pcnet_read_mac_address(mac_addr_t* mac) {
 // Encode ring length (returns the encoded value for init block)
 // Length must be a power of 2 between 1 and 512
 static uint8_t pcnet_encode_ring_length(int length) {
+    /* Encode power-of-two descriptor ring length for init block format. */
     int log2 = 0;
     while ((1 << log2) < length && log2 < 9) {
         log2++;
@@ -136,6 +148,7 @@ static uint8_t pcnet_encode_ring_length(int length) {
 }
 
 static void pcnet_init_rx_ring(void) {
+    /* Allocate and initialize RX descriptor ring + buffers. */
     // Allocate descriptor ring (16-byte aligned)
     uint32_t desc_size = sizeof(pcnet_rx_desc_t) * PCNET_NUM_RX_DESC;
     uint8_t* raw_desc = (uint8_t*)kmalloc(desc_size + 16);
@@ -159,6 +172,7 @@ static void pcnet_init_rx_ring(void) {
 }
 
 static void pcnet_init_tx_ring(void) {
+    /* Allocate and initialize TX descriptor ring + buffers. */
     // Allocate descriptor ring (16-byte aligned)
     uint32_t desc_size = sizeof(pcnet_tx_desc_t) * PCNET_NUM_TX_DESC;
     uint8_t* raw_desc = (uint8_t*)kmalloc(desc_size + 16);

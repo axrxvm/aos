@@ -25,6 +25,13 @@
 #include <acpi.h>
 #include <io.h>
 
+/*
+ * Interactive shell runtime (ring 0 legacy shell path).
+ *
+ * Manages prompt/input editing, command history persistence, session-aware
+ * login/logout flow, and control handoff to command registry execution.
+ */
+
 static int shell_exit_flag = 0;
 static int shell_cancel_flag = 0;
 static char input_buffer[SHELL_INPUT_MAX];
@@ -48,6 +55,7 @@ extern int unformatted_disk_detected;
 
 // Helper function to redraw the input line with proper cursor positioning
 static void redraw_input_line(void) {
+    /* Repaint active input buffer and restore cursor to logical edit position. */
     // Move to start of input
     vga_set_position(input_start_row, input_start_col);
     
@@ -69,6 +77,7 @@ static void redraw_input_line(void) {
 }
 
 void shell_load_history(void) {
+    /* Load per-user command history from home directory history file. */
     session_t* session = user_get_session();
     if (!session || !session->user) {
         return;
@@ -143,6 +152,7 @@ void shell_load_history(void) {
 }
 
 void shell_save_history(void) {
+    /* Persist current in-memory history buffer to user history file. */
     session_t* session = user_get_session();
     if (!session || !session->user) {
         return;
@@ -210,6 +220,7 @@ void shell_save_history(void) {
 }
 
 void shell_add_history(const char* command) {
+    /* Append command to history unless empty/duplicate of last entry. */
     if (!command || !*command) {
         return;
     }

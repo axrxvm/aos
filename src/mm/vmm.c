@@ -17,6 +17,19 @@
 #include <string.h>
 #include <panic.h>
 
+/*
+ * Virtual Memory Manager (VMM)
+ *
+ * Responsibilities:
+ * - Track active address spaces (`current_address_space`, `kernel_address_space`)
+ * - Provide kernel heap allocation (`kmalloc`/`kfree`) via slab-backed paths
+ * - Manage virtual mappings and VMAs for user and kernel allocations
+ *
+ * Early-boot note:
+ * Kernel address space metadata uses static storage to avoid recursive
+ * allocator dependency before heap infrastructure is fully online.
+ */
+
 // Define SIZE_MAX if not already defined
 #ifndef SIZE_MAX
 #define SIZE_MAX ((size_t)-1)
@@ -69,6 +82,7 @@ static int vmm_addr_in_vma(address_space_t *as, uintptr_t addr);
 
 // Simple checksum calculation for integrity checking
 static uint32_t calculate_checksum(void *ptr, size_t size) {
+    /* Lightweight rolling checksum for allocation metadata integrity checks. */
     uint32_t sum = 0;
     uint8_t *bytes = (uint8_t *)ptr;
     for (size_t i = 0; i < size; i++) {
@@ -97,6 +111,7 @@ static int vmm_addr_in_vma(address_space_t *as, uintptr_t addr) {
 
 // Initialize a slab cache
 static void init_slab_cache(slab_cache_t *cache, uint32_t obj_size) {
+    /* Initialize one object-size class cache. */
     if (!cache) return;
     
     cache->obj_size = obj_size;
@@ -109,6 +124,10 @@ static void init_slab_cache(slab_cache_t *cache, uint32_t obj_size) {
 
 // Allocate from slab cache
 static void *slab_alloc(slab_cache_t *cache) {
+    /*
+     * Allocate object from slab cache; lazily provisions backing page when
+     * free list is empty.
+     */
     if (!cache) return NULL;
     
     // Check if we need to allocate a new slab
@@ -184,6 +203,10 @@ static void *slab_alloc(slab_cache_t *cache) {
 
 // Free to slab cache with enhanced safety checks
 static void slab_free(slab_cache_t *cache, void *ptr) {
+    /*
+     * Return object to slab cache with guard/checksum verification to detect
+     * corruption, overflow, and double-free patterns.
+     */
     if (!cache || !ptr) {
         serial_puts("ERROR: slab_free - NULL cache or pointer\n");
         return;
@@ -269,6 +292,10 @@ static void slab_free(slab_cache_t *cache, void *ptr) {
 }
 
 void init_vmm(void) {
+    /*
+     * Bootstrap kernel VMM state and slab caches using existing page tables.
+     * Must run after paging + PMM initialization.
+     */
     serial_puts("Initializing Virtual Memory Manager...\n");
     
     // Use static allocation for kernel address space to avoid kmalloc recursion

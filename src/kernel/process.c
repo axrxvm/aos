@@ -22,6 +22,18 @@
 #include <init.h>
 #include <kmodule.h>
 
+/*
+ * Process manager overview:
+ *
+ * - `process_table` is the authoritative process registry.
+ * - Ready queues are priority-bucket FIFO lists (`PRIORITY_IDLE..REALTIME`).
+ * - Scheduling is preemptive tick-based with per-priority time slices.
+ * - Context switching is delegated to arch-specific switch routines.
+ *
+ * This unit also tracks sandbox/ownership metadata used by security and
+ * accounting layers.
+ */
+
 // Process table
 static process_t process_table[MAX_PROCESSES];
 static process_t* current_process = NULL;
@@ -46,6 +58,7 @@ static const uint32_t time_slices[5] = {
 
 // Helper functions
 static int clamp_priority(int priority) {
+    /* Keep externally supplied priorities within scheduler's legal range. */
     if (priority < PRIORITY_IDLE) return PRIORITY_IDLE;
     if (priority > PRIORITY_REALTIME) return PRIORITY_REALTIME;
     return priority;
@@ -66,6 +79,10 @@ const char* process_task_type_name(task_type_t type) {
 }
 
 static void enqueue_process(process_t* proc) {
+    /*
+     * Insert process at tail of its priority queue (round-robin within level).
+     * Only schedulable tasks are queue-managed.
+     */
     if (!proc || !proc->schedulable) return;
     
     int priority = clamp_priority(proc->priority);
@@ -85,6 +102,7 @@ static void enqueue_process(process_t* proc) {
 }
 
 static process_t* dequeue_process(int priority) {
+    /* Pop next runnable process from the selected priority queue. */
     if (priority < PRIORITY_IDLE || priority > PRIORITY_REALTIME) return NULL;
     if (!ready_queue[priority]) return NULL;
     
@@ -96,6 +114,10 @@ static process_t* dequeue_process(int priority) {
 }
 
 static process_t* allocate_process(void) {
+    /*
+     * Reuse dead slots to avoid dynamic table growth and keep PID ownership
+     * metadata centralized in one fixed-size table.
+     */
     for (int i = 0; i < MAX_PROCESSES; i++) {
         if (process_table[i].state == PROCESS_DEAD) {
             memset(&process_table[i], 0, sizeof(process_t));
@@ -114,6 +136,13 @@ static void idle_task(void) {
 
 // Initialize process manager
 void init_process_manager(void) {
+    /*
+     * Boot-time scheduler/process bootstrap.
+     *
+     * Creates:
+     * - idle task (lowest priority fallback when no runnable work exists)
+     * - initial kernel task representing current execution context
+     */
     serial_puts("Initializing process manager...\n");
     
     // Initialize process table

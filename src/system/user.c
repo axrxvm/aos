@@ -17,6 +17,13 @@
 #include <process.h>
 #include <fileperm.h>
 
+/*
+ * User/account management subsystem.
+ *
+ * Maintains in-memory user database, session state, authentication, and
+ * persistence helpers for user records on local filesystems.
+ */
+
 // User database (static allocation for early boot)
 static user_t user_database[MAX_USERS];
 static uint32_t user_count = 0;
@@ -26,6 +33,7 @@ static session_t current_session;
 
 // Helper function: hash password
 static void hash_password(const char* password, char* hash_out) {
+    /* Hash plaintext password into hex SHA-256 representation. */
     uint8_t digest[SHA256_DIGEST_SIZE];
     sha256_hash((const uint8_t*)password, strlen(password), digest);
     sha256_to_hex(digest, hash_out);
@@ -33,6 +41,7 @@ static void hash_password(const char* password, char* hash_out) {
 
 // Helper function: get next available UID
 static uint32_t get_next_uid(void) {
+    /* Allocate next available non-reserved UID from current database state. */
     uint32_t max_uid = UID_USER_START - 1;
     for (uint32_t i = 0; i < user_count; i++) {
         if (user_database[i].uid > max_uid) {
@@ -43,6 +52,7 @@ static uint32_t get_next_uid(void) {
 }
 
 void user_init(void) {
+    /* Initialize user database/session and ensure root account exists. */
     serial_puts("Initializing user management system...\n");
     
     // Clear user database
@@ -69,6 +79,7 @@ void user_init(void) {
 
 int user_create(const char* username, const char* password, uint32_t uid, uint32_t gid,
                 const char* home_dir, const char* shell) {
+    /* Create user entry with uniqueness checks and hashed password storage. */
     if (!username || !password || !home_dir || !shell) {
         return -1;
     }
@@ -192,6 +203,7 @@ user_t* user_find_by_uid(uint32_t uid) {
 }
 
 user_t* user_authenticate(const char* username, const char* password) {
+    /* Verify username/password and account status flags. */
     if (!username || !password) {
         return NULL;
     }

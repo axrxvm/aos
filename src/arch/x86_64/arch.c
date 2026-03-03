@@ -15,6 +15,13 @@
 #include <io.h>
 #include <stdint.h>
 
+/*
+ * x86_64 architecture adapter.
+ *
+ * Connects generic kernel architecture hooks to long-mode specific interrupt,
+ * timer, segment, and I/O implementations.
+ */
+
 const char* arch_get_name(void) {
     return "x86_64";
 }
@@ -28,6 +35,7 @@ void arch_cpu_init(void) {
 }
 
 void arch_interrupts_init(void) {
+    /* Initialize IDT and remapped PIC for IRQ handling in long mode. */
     init_idt();
     pic_init();
 }
@@ -79,6 +87,7 @@ uint32_t arch_get_user_data_segment(void) {
 extern uint64_t tss_rsp0;
 
 void arch_set_kernel_stack(uintptr_t stack) {
+    /* Update TSS RSP0 used for privilege transitions from ring 3 to ring 0. */
     tss_rsp0 = (uint64_t)stack;
 }
 
@@ -91,6 +100,7 @@ static void arch_pit_handler_wrapper(void* regs) {
 }
 
 void arch_timer_init(uint32_t frequency_hz) {
+    /* Configure PIT and install IRQ0 wrapper into architecture handler table. */
     uint32_t divisor = 1193182 / frequency_hz;
     if (divisor > 65535) divisor = 65535;
     if (divisor == 0) divisor = 1;

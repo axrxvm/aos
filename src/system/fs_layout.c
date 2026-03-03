@@ -16,10 +16,18 @@
 #include <stdlib.h>
 #include <stdlib.h>
 
+/*
+ * Filesystem layout bootstrap helpers.
+ *
+ * Creates and resolves standard directory layout paths used by system/user
+ * runtime conventions across local and ISO modes.
+ */
+
 static int current_fs_mode = FS_MODE_ISO;
 
 // Helper function to create directory if it doesn't exist
 static int mkdir_if_not_exists(const char* path) {
+    /* Ensure directory exists, creating it when missing. */
     vnode_t* node = vfs_resolve_path(path);
     if (node) {
         // Directory already exists
@@ -42,6 +50,7 @@ static int mkdir_if_not_exists(const char* path) {
 }
 
 int fs_layout_init(int mode) {
+    /* Create canonical system/user directory tree for selected boot mode. */
     serial_puts("Initializing filesystem layout (mode: ");
     serial_puts(mode == FS_MODE_LOCAL ? "LOCAL" : "ISO");
     serial_puts(")...\n");
@@ -85,6 +94,7 @@ int fs_layout_init(int mode) {
 }
 
 int fs_layout_create_user_home(const char* username) {
+    /* Provision /usr/<user>/home hierarchy for newly created account. */
     if (!username) {
         return -1;
     }
@@ -139,6 +149,7 @@ int fs_layout_get_user_home(const char* username, char* buffer, uint32_t size) {
 }
 
 int fs_layout_expand_tilde(const char* path, char* buffer, uint32_t size) {
+    /* Expand `~` paths using currently authenticated session home directory. */
     if (!path || !buffer || size == 0) {
         return -1;
     }

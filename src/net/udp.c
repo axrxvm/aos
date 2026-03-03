@@ -15,6 +15,13 @@
 #include <vmm.h>
 #include <serial.h>
 
+/*
+ * UDP transport layer.
+ *
+ * Provides datagram socket table, port binding, packet enqueue/dequeue receive
+ * queues, and send/recv helpers for higher-level protocols and user services.
+ */
+
 #define MAX_UDP_SOCKETS 32
 
 // Ephemeral port counter for UDP
@@ -34,6 +41,7 @@ typedef struct {
 } __attribute__((packed)) udp_pseudo_header_t;
 
 void udp_init(void) {
+    /* Initialize socket table, preferring dynamic allocation to reduce static BSS. */
     serial_puts("Initializing UDP...\n");
     
     // Allocate UDP sockets dynamically to avoid huge BSS section
@@ -50,6 +58,7 @@ void udp_init(void) {
 
 int udp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
                 net_packet_t* packet) {
+    /* Demultiplex inbound datagram into socket receive queue by destination port. */
     (void)iface;
     (void)dest_ip;
     
@@ -134,6 +143,7 @@ int udp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
 }
 
 int udp_send(udp_socket_t* sock, const uint8_t* data, uint32_t len) {
+    /* Send datagram via socket's connected remote endpoint. */
     if (!sock || !data || !sock->connected) {
         return -1;
     }
@@ -142,6 +152,7 @@ int udp_send(udp_socket_t* sock, const uint8_t* data, uint32_t len) {
 }
 
 udp_socket_t* udp_socket_create(void) {
+    /* Reserve and clear a free UDP socket table slot. */
     for (int i = 0; i < MAX_UDP_SOCKETS; i++) {
         if (!udp_sockets[i].bound && !udp_sockets[i].connected) {
             memset(&udp_sockets[i], 0, sizeof(udp_socket_t));
@@ -152,6 +163,7 @@ udp_socket_t* udp_socket_create(void) {
 }
 
 int udp_socket_bind(udp_socket_t* sock, uint32_t ip, uint16_t port) {
+    /* Bind socket to local address/port, auto-assigning ephemeral port if needed. */
     if (!sock || sock->bound) {
         return -1;
     }

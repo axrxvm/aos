@@ -17,13 +17,14 @@ Please report potential vulnerabilities **privately** using one of these channel
 
 1. **GitHub Private Vulnerability Reporting**
    - Go to the repository **Security** tab and use **Report a vulnerability**.
-   - Direct link: `https://github.com/axrxvm/aOS/security/advisories/new`
+   - Direct link: <https://github.com/axrxvm/aOS/security/advisories/new>
 2. **Email**
    - Send details to `axrxvm@proton.me`.
 
 Do **not** open public GitHub issues for security problems.
 
 When reporting, include:
+
 - affected version/commit
 - impact and attack scenario
 - reproduction steps or proof of concept

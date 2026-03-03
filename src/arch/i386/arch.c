@@ -16,6 +16,13 @@
 #include <io.h>
 #include <stdint.h>
 
+/*
+ * i386 architecture adapter.
+ *
+ * Bridges generic arch API to concrete i386 implementations (GDT/IDT/PIC/PIT,
+ * segment selectors, interrupt toggles, and port I/O helpers).
+ */
+
 // Architecture name
 const char* arch_get_name(void) {
     return "i386";
@@ -27,11 +34,13 @@ const char* arch_get_description(void) {
 
 // CPU initialization
 void arch_cpu_init(void) {
+    /* Initialize CPU descriptor tables required before enabling interrupts. */
     init_gdt();
 }
 
 // Interrupt management
 void arch_interrupts_init(void) {
+    /* Initialize IDT and PIC routing for CPU exceptions + hardware IRQs. */
     init_idt();
     pic_init();
 }
@@ -99,6 +108,7 @@ static void arch_pit_handler_wrapper(void* regs) {
 }
 
 void arch_timer_init(uint32_t frequency_hz) {
+    /* Configure PIT divider and register timer IRQ dispatch wrapper. */
     // Calculate PIT divisor for desired frequency
     // PIT base frequency is 1193182 Hz
     uint32_t divisor = 1193182 / frequency_hz;

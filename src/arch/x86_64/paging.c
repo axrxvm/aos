@@ -15,6 +15,13 @@
 #include <string.h>
 #include <panic.h>
 
+/*
+ * x86_64 paging manager (4-level page tables).
+ *
+ * Provides page table creation/cloning, mapping/unmapping, CR3 switching, and
+ * page fault hook wiring for long-mode address-space management.
+ */
+
 page_directory_t* current_directory = 0;
 page_directory_t* kernel_directory = 0;
 
@@ -56,6 +63,7 @@ static inline void write_cr3(uint64_t cr3) {
 }
 
 static uint64_t* alloc_table_page(void) {
+    /* Allocate and zero a page-table page (DMA zone preferred early boot). */
     void* page = alloc_page_from_zone(PMM_ZONE_DMA);
     if (!page) {
         page = alloc_page();
@@ -69,6 +77,7 @@ static uint64_t* alloc_table_page(void) {
 }
 
 static uint64_t normalize_entry_flags(uint32_t flags) {
+    /* Keep only supported PTE flags and force PRESENT bit for mapped entries. */
     uint64_t entry_flags = (uint64_t)(flags & (PAGE_PRESENT | PAGE_WRITE | PAGE_USER |
                                                PAGE_WRITETHROUGH | PAGE_NOCACHE |
                                                PAGE_ACCESSED | PAGE_DIRTY | PAGE_GLOBAL));
@@ -77,6 +86,7 @@ static uint64_t normalize_entry_flags(uint32_t flags) {
 }
 
 static int split_2mb_page(uint64_t* pd, uint16_t pd_i) {
+    /* Convert one 2MiB PDE mapping into equivalent 4KiB PT mappings. */
     uint64_t pde = pd[pd_i];
     if (!entry_present(pde) || !entry_large(pde)) {
         return 0;
@@ -101,6 +111,7 @@ static int split_2mb_page(uint64_t* pd, uint16_t pd_i) {
 }
 
 static int clone_kernel_mappings(page_directory_t* dir) {
+    /* Clone kernel-space mappings into newly created address space root. */
     if (!kernel_directory || !kernel_directory->pml4) {
         return 0;
     }
@@ -174,6 +185,7 @@ static int clone_kernel_mappings(page_directory_t* dir) {
 }
 
 void init_paging(void) {
+    /* Bind paging state to currently active bootloader-installed CR3 mappings. */
     uint64_t cr3 = read_cr3() & X86_64_ADDR_MASK;
 
     kernel_directory_static.pml4 = (uint64_t*)(uintptr_t)cr3;

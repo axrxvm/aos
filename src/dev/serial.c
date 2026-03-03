@@ -11,6 +11,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/*
+ * Legacy COM1 serial console driver.
+ *
+ * Used for early boot diagnostics and low-level logging before higher-level
+ * console paths are fully available.
+ */
+
 // Define the base address of the first serial port (COM1)
 #define COM1_BASE 0x3F8
 
@@ -23,11 +30,13 @@
 
 // Helper function to write a byte to a serial port register
 static inline void serial_outb(uint16_t port, uint8_t data) {
+    /* Write byte to UART register. */
     __asm__ volatile ("outb %1, %0" : : "dN" (port), "a" (data));
 }
 
 // Helper function to read a byte from a serial port register
 static inline uint8_t serial_inb(uint16_t port) {
+    /* Read byte from UART register. */
     uint8_t data;
     __asm__ volatile ("inb %1, %0" : "=a" (data) : "dN" (port));
     return data;
@@ -36,6 +45,7 @@ static inline uint8_t serial_inb(uint16_t port) {
 // Initialize the serial port (COM1)
 // Initialize the serial port (COM1)
 int serial_init() {
+    /* Configure COM1 for 38400 8N1 with FIFO enabled. */
     uint16_t base = COM1_BASE;
 
     // Disable all interrupts
@@ -63,6 +73,7 @@ static int serial_is_transmit_fifo_empty(uint16_t port) {
 
 // Send a single character to the serial port
 void serial_putc(char c) {
+    /* Transmit one character, waiting until FIFO can accept data. */
     uint16_t base = COM1_BASE;
     while (serial_is_transmit_fifo_empty(base) == 0); // Wait for FIFO to be empty
     serial_outb(SERIAL_DATA_PORT(base), c);
@@ -70,6 +81,7 @@ void serial_putc(char c) {
 
 // Send a null-terminated string to the serial port
 void serial_puts(const char *s) {
+    /* Transmit null-terminated string over serial output. */
     for (size_t i = 0; s[i] != '\0'; i++) {
         serial_putc(s[i]);
     }

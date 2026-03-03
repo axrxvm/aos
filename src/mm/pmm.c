@@ -16,6 +16,19 @@
 #include <stdlib.h> // For itoa
 #include <string.h>
 
+/*
+ * Physical Memory Manager (PMM)
+ *
+ * Allocation strategy:
+ * - Global frame bitmap is source-of-truth for ownership.
+ * - Zoned allocation preference: NORMAL -> DMA -> HIGH.
+ * - Small LIFO frame stack accelerates frequent single-page alloc/free cycles.
+ *
+ * Safety:
+ * - Bounds checks guard frame index operations.
+ * - Reserved low-memory kernel frames are never returned to callers.
+ */
+
 // Memory zone boundaries (in frame numbers)
 #define DMA_ZONE_END        (16 * 1024 * 1024 / PAGE_SIZE)      // 16MB
 #define NORMAL_ZONE_END     (896 * 1024 * 1024 / PAGE_SIZE)     // 896MB
@@ -46,6 +59,7 @@ static uint32_t failed_alloc_count = 0;
 
 // Internal helper functions
 static inline void set_frame(uint32_t frame_index) {
+    /* Mark frame allocated in bitmap and account only on state transition. */
     if (frame_index >= MAX_FRAMES) {
         serial_puts("CRITICAL: set_frame - frame_index out of bounds\n");
         return;
@@ -62,6 +76,7 @@ static inline void set_frame(uint32_t frame_index) {
 }
 
 static inline void clear_frame(uint32_t frame_index) {
+    /* Mark frame free in bitmap and account only on state transition. */
     if (frame_index >= MAX_FRAMES) {
         serial_puts("CRITICAL: clear_frame - frame_index out of bounds\n");
         return;
@@ -88,6 +103,7 @@ static inline uint8_t test_frame(uint32_t frame_index) {
 
 // Find free frame in specific zone
 static int find_free_frame_in_zone(pmm_zone_t zone) {
+    /* Scan bitmap for first free frame in zone respecting reserved constraints. */
     uint32_t start_frame = zones[zone].start_frame;
     uint32_t end_frame = zones[zone].end_frame;
     
@@ -116,6 +132,7 @@ static int find_free_frame_in_zone(pmm_zone_t zone) {
 
 // Fast allocation from stack
 static void* alloc_from_stack(void) {
+    /* Fast path for page allocation from freelist stack. */
     if (frame_stack_top >= 0) {
         uint32_t frame = frame_stack[frame_stack_top--];
         if (frame < KERNEL_RESERVED || frame >= total_frames) {
@@ -131,6 +148,7 @@ static void* alloc_from_stack(void) {
 
 // Add frame to stack for fast reallocation
 static void add_to_stack(uint32_t frame) {
+    /* Cache recently freed frame for fast reallocation if stack has room. */
     if (frame_stack_top < FRAME_STACK_SIZE - 1) {
         frame_stack[++frame_stack_top] = frame;
     }
@@ -139,6 +157,7 @@ static void add_to_stack(uint32_t frame) {
 
 // Initialize zone boundaries
 static void init_zones(uint32_t mem_size) {
+    /* Partition total physical memory into policy zones used by allocator. */
     uint32_t total = mem_size / PAGE_SIZE;
     
     // DMA Zone: 0-16MB
@@ -180,6 +199,10 @@ static void init_zones(uint32_t mem_size) {
 }
 
 void init_pmm(uint32_t mem_size) {
+    /*
+     * Initialize PMM bookkeeping from detected physical memory size.
+     * Caller supplies bytes; PMM converts to page-frame accounting.
+     */
     // If no memory size provided, assume 32MB as minimum
     if (mem_size == 0) {
         mem_size = 32 * 1024 * 1024; // 32MB

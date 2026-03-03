@@ -11,6 +11,13 @@
 #include <io.h>
 #include <stdint.h>
 
+/*
+ * PS/2 mouse driver.
+ *
+ * Initializes auxiliary device, optionally enables IntelliMouse extensions,
+ * and parses incoming packet stream into normalized movement/button state.
+ */
+
 // PS/2 Mouse ports
 #define MOUSE_DATA_PORT     0x60
 #define MOUSE_COMMAND_PORT  0x64
@@ -39,6 +46,7 @@ static uint8_t new_data_available = 0;
  * Wait for the mouse controller to be ready to receive commands
  */
 static void mouse_wait_input(void) {
+    /* Wait until controller input buffer is clear (ready for command write). */
     uint32_t timeout = 100000;
     while (timeout--) {
         if ((inb(MOUSE_COMMAND_PORT) & 0x02) == 0) {
@@ -51,6 +59,7 @@ static void mouse_wait_input(void) {
  * Wait for the mouse controller to have data available
  */
 static void mouse_wait_output(void) {
+    /* Wait until controller output buffer contains readable data. */
     uint32_t timeout = 100000;
     while (timeout--) {
         if (inb(MOUSE_COMMAND_PORT) & 0x01) {
@@ -63,6 +72,7 @@ static void mouse_wait_output(void) {
  * Write a byte to the mouse
  */
 static void mouse_write(uint8_t data) {
+    /* Send byte to PS/2 mouse via controller command/data sequence. */
     mouse_wait_input();
     outb(MOUSE_COMMAND_PORT, CONTROLLER_CMD_WRITE_TO_MOUSE);
     mouse_wait_input();
@@ -73,6 +83,7 @@ static void mouse_write(uint8_t data) {
  * Read a byte from the mouse
  */
 static uint8_t mouse_read(void) {
+    /* Read one response/data byte from mouse channel. */
     mouse_wait_output();
     return inb(MOUSE_DATA_PORT);
 }
@@ -115,6 +126,7 @@ static void mouse_try_enable_scrollwheel(void) {
 }
 
 void mouse_init(void) {
+    /* Initialize PS/2 mouse pipeline and start packet streaming mode. */
     // Enable auxiliary mouse device
     mouse_wait_input();
     outb(MOUSE_COMMAND_PORT, CONTROLLER_CMD_ENABLE_AUX);
@@ -155,6 +167,7 @@ void mouse_init(void) {
  * Process a byte from the mouse (should be called from IRQ12 handler)
  */
 void mouse_handle_interrupt(uint8_t mouse_byte) {
+    /* Assemble stream bytes into full packet and publish latest movement state. */
     mouse_bytes[mouse_cycle] = mouse_byte;
     mouse_cycle++;
     

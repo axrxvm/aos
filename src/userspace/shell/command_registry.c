@@ -15,6 +15,13 @@
 #include <serial.h>
 #include <process.h>
 
+/*
+ * Command registry subsystem.
+ *
+ * Maintains static command table, module registration hooks, and command
+ * dispatch path (built-in handlers first, then VM-backed module commands).
+ */
+
 // Command registry - static allocation to avoid early boot issues
 static command_t command_registry[MAX_REGISTERED_COMMANDS];
 static uint32_t num_registered_commands = 0;
@@ -46,6 +53,7 @@ void command_register(const char* name, const char* syntax, const char* descript
 }
 
 void command_register_with_category(const char* name, const char* syntax, const char* description, const char* category, command_handler_t handler) {
+    /* Add command metadata + handler to static registry table. */
     if (num_registered_commands >= MAX_REGISTERED_COMMANDS) {
         serial_puts("ERROR: Command registry full, cannot register '");
         serial_puts(name);
@@ -82,6 +90,7 @@ int command_unregister(const char* name) {
 }
 
 void init_commands(void) {
+    /* Clear registry and register all built-in command modules. */
     serial_puts("Initializing command system...\n");
     num_registered_commands = 0;
     
@@ -117,6 +126,7 @@ const command_t* command_get_all(void) {
 }
 
 int execute_command(const char* input) {
+    /* Parse command line and dispatch to built-in or module VM handler. */
     if (!input || *input == '\0') {
         return 0; // Empty command
     }

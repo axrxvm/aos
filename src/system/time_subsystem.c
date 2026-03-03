@@ -20,6 +20,13 @@
 #include <serial.h>
 #include <vmm.h>
 
+/*
+ * Time subsystem.
+ *
+ * Combines RTC/CMOS reads, timezone persistence, and network time API sync to
+ * provide wall-clock state for userspace and services.
+ */
+
 #define TIME_API_BASE_URL "http://api.aosproject.workers.dev/time"
 #define CMOS_ADDRESS_PORT 0x70
 #define CMOS_DATA_PORT 0x71
@@ -61,12 +68,14 @@ typedef struct {
 } rtc_snapshot_t;
 
 static uint8_t cmos_read_register(uint8_t reg) {
+    /* Read one CMOS RTC register with NMI masked during access. */
     outb(CMOS_ADDRESS_PORT, (uint8_t)((reg & 0x7F) | CMOS_NMI_DISABLE));
     io_wait();
     return inb(CMOS_DATA_PORT);
 }
 
 static void cmos_write_register(uint8_t reg, uint8_t value) {
+    /* Write one CMOS RTC register with NMI masked during access. */
     outb(CMOS_ADDRESS_PORT, (uint8_t)((reg & 0x7F) | CMOS_NMI_DISABLE));
     io_wait();
     outb(CMOS_DATA_PORT, value);
@@ -74,6 +83,7 @@ static void cmos_write_register(uint8_t reg, uint8_t value) {
 }
 
 static int rtc_wait_until_ready(void) {
+    /* Wait until RTC update-in-progress flag clears for stable reads. */
     for (int i = 0; i < 100000; i++) {
         if ((cmos_read_register(RTC_REG_STATUS_A) & RTC_STATUS_A_UIP) == 0) {
             return 0;
@@ -99,6 +109,7 @@ static uint8_t binary_to_bcd(uint8_t value) {
 }
 
 static void rtc_take_snapshot(rtc_snapshot_t* out) {
+    /* Capture one complete RTC register snapshot for consistency checks. */
     uint8_t century_reg = rtc_get_century_register();
 
     out->seconds = cmos_read_register(RTC_REG_SECONDS);
@@ -149,6 +160,7 @@ static int rtc_year_from_snapshot(const rtc_snapshot_t* snap) {
 }
 
 static int bios_rtc_read_datetime(aos_datetime_t* out) {
+    /* Read and normalize RTC date/time into 24h validated datetime struct. */
     rtc_snapshot_t a;
     rtc_snapshot_t b;
     int hour;

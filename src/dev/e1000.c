@@ -25,6 +25,13 @@
 #include <vmm.h>
 #include <stdlib.h>
 
+/*
+ * Intel e1000 NIC driver.
+ *
+ * Initializes PCI/MMIO-backed NIC, sets up DMA descriptor rings, and bridges
+ * packet TX/RX with aOS networking interface callbacks.
+ */
+
 // E1000 Device State
 static uint8_t* mmio_base = NULL;
 static net_interface_t* e1000_iface = NULL;
@@ -52,10 +59,12 @@ static uint32_t rx_packets = 0;
 
 
 static inline uint32_t e1000_read_reg(uint32_t reg) {
+    /* Read 32-bit MMIO register from e1000 register space. */
     return *((volatile uint32_t*)(mmio_base + reg));
 }
 
 static inline void e1000_write_reg(uint32_t reg, uint32_t value) {
+    /* Write 32-bit MMIO register with compiler memory barrier. */
     *((volatile uint32_t*)(mmio_base + reg)) = value;
     // Memory barrier to ensure write completes
     __asm__ __volatile__("" ::: "memory");
@@ -66,6 +75,7 @@ static inline void e1000_write_reg(uint32_t reg, uint32_t value) {
 
 
 static uint16_t e1000_read_eeprom(uint8_t addr) {
+    /* Read 16-bit EEPROM word via EERD register protocol. */
     e1000_write_reg(E1000_REG_EERD, ((uint32_t)addr << 8) | 1);
     
     uint32_t tmp;
@@ -76,6 +86,7 @@ static uint16_t e1000_read_eeprom(uint8_t addr) {
 }
 
 static void e1000_read_mac_address(mac_addr_t* mac) {
+    /* Extract hardware MAC address from EEPROM words. */
     uint16_t mac_words[3];
     
     for (int i = 0; i < 3; i++) {
@@ -95,6 +106,7 @@ static void e1000_read_mac_address(mac_addr_t* mac) {
 
 
 static void e1000_init_rx(void) {
+    /* Allocate/initialize RX descriptor ring and enable receiver path. */
     // Allocate descriptor ring with 16-byte alignment for DMA
     uint32_t desc_size = sizeof(e1000_rx_desc_t) * E1000_NUM_RX_DESC;
     uint8_t* raw_desc = (uint8_t*)kmalloc(desc_size + 16);
@@ -131,6 +143,7 @@ static void e1000_init_rx(void) {
 }
 
 static void e1000_init_tx(void) {
+    /* Allocate/initialize TX descriptor ring and enable transmitter path. */
     // Allocate descriptor ring with 16-byte alignment
     uint32_t desc_size = sizeof(e1000_tx_desc_t) * E1000_NUM_TX_DESC;
     uint8_t* raw_desc = (uint8_t*)kmalloc(desc_size + 16);

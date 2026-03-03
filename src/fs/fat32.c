@@ -29,6 +29,14 @@
 #include <fileperm.h>
 #include <process.h>
 
+/*
+ * FAT32 driver implementation.
+ *
+ * Maintains on-disk compatibility with standard FAT32 layouts while exposing
+ * aOS VFS vnode operations. Includes FAT cache management, cluster-chain
+ * updates, short/long filename handling, and directory entry synchronization.
+ */
+
 // Forward declarations for vnode operations
 static int fat32_vnode_open(vnode_t* node, uint32_t flags);
 static int fat32_vnode_close(vnode_t* node);
@@ -102,6 +110,7 @@ static filesystem_t fat32_filesystem = {
 
 
 static int read_sector(fat32_data_t* fs_data, uint32_t sector, void* buffer) {
+    /* Read logical FAT32 sector relative to partition start LBA. */
     if (!fs_data || !buffer) {
         return -1;
     }
@@ -110,6 +119,7 @@ static int read_sector(fat32_data_t* fs_data, uint32_t sector, void* buffer) {
 }
 
 static int write_sector(fat32_data_t* fs_data, uint32_t sector, const void* buffer) {
+    /* Write logical FAT32 sector relative to partition start LBA. */
     if (!fs_data || !buffer) {
         return -1;
     }
@@ -118,6 +128,7 @@ static int write_sector(fat32_data_t* fs_data, uint32_t sector, const void* buff
 }
 
 static uint32_t cluster_to_sector(fat32_data_t* fs_data, uint32_t cluster) {
+    /* Translate cluster number (>=2) into first data-sector index. */
     if (cluster < 2) {
         return 0; // Invalid cluster
     }
@@ -126,6 +137,7 @@ static uint32_t cluster_to_sector(fat32_data_t* fs_data, uint32_t cluster) {
 }
 
 static int read_cluster(fat32_data_t* fs_data, uint32_t cluster, void* buffer) {
+    /* Read entire cluster by iterating all constituent sectors. */
     if (!fs_data || !buffer || cluster < 2) {
         return -1;
     }
@@ -142,6 +154,7 @@ static int read_cluster(fat32_data_t* fs_data, uint32_t cluster, void* buffer) {
 }
 
 static int write_cluster(fat32_data_t* fs_data, uint32_t cluster, const void* buffer) {
+    /* Write entire cluster by iterating all constituent sectors. */
     if (!fs_data || !buffer || cluster < 2) {
         return -1;
     }
@@ -159,6 +172,7 @@ static int write_cluster(fat32_data_t* fs_data, uint32_t cluster, const void* bu
 }
 
 static uint32_t get_next_cluster(fat32_data_t* fs_data, uint32_t cluster) {
+    /* Lookup next link in FAT cluster chain (masked to 28-bit FAT32 value). */
     if (!fs_data || !fs_data->fat || cluster < 2 || cluster >= fs_data->total_clusters + 2) {
         return FAT32_CLUSTER_EOC;
     }
@@ -168,6 +182,7 @@ static uint32_t get_next_cluster(fat32_data_t* fs_data, uint32_t cluster) {
 }
 
 static int set_next_cluster(fat32_data_t* fs_data, uint32_t cluster, uint32_t next) {
+    /* Update FAT chain link and mark in-memory FAT cache dirty for sync. */
     if (!fs_data || !fs_data->fat || cluster < 2 || cluster >= fs_data->total_clusters + 2) {
         return -1;
     }

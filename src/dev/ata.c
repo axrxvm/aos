@@ -14,12 +14,20 @@
 #include <string.h>
 #include <stdlib.h>
 
+/*
+ * ATA PIO driver.
+ *
+ * Provides sector-level read/write operations for primary master device,
+ * including IDENTIFY-based probing and basic timeout/error handling.
+ */
+
 static int ata_initialized = 0;
 static int ata_available = 0;
 static uint32_t ata_total_sectors = 0;
 
 // Wait for ATA drive to be ready
 static int ata_wait_bsy(void) {
+    /* Poll status register until BSY clears or timeout expires. */
     uint32_t timeout = 10000000;  // Increased from 1000000
     while (timeout--) {
         uint8_t status = inb(ATA_PRIMARY_STATUS);
@@ -32,6 +40,7 @@ static int ata_wait_bsy(void) {
 
 // Wait for data to be ready
 static int ata_wait_drq(void) {
+    /* Poll for DRQ-ready data phase; fail early on ERR bit. */
     uint32_t timeout = 10000000;  // Increased from 1000000
     while (timeout--) {
         uint8_t status = inb(ATA_PRIMARY_STATUS);
@@ -52,12 +61,14 @@ static uint8_t ata_read_status(void) {
 
 // Perform 400ns delay by reading alternate status register
 static void ata_400ns_delay(void) {
+    /* ATA spec requires short delay after selected command writes. */
     for (int i = 0; i < 4; i++) {
         inb(ATA_PRIMARY_ALT_STATUS);
     }
 }
 
 void ata_init(void) {
+    /* Probe and initialize ATA primary master device state. */
     serial_puts("Initializing ATA driver...\n");
     
     // Disable interrupts on ATA controller
@@ -140,6 +151,7 @@ uint32_t ata_get_sector_count(void) {
 }
 
 int ata_read_sectors(uint32_t lba, uint8_t count, uint8_t* buffer) {
+    /* Read contiguous sectors using ATA PIO read command. */
     if (!ata_initialized) {
         serial_puts("ATA: Driver not initialized\n");
         return -1;

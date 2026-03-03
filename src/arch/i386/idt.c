@@ -12,6 +12,13 @@
 #include <serial.h>
 // Removed <string.h> as memset is not used; manual loop is used instead.
 
+/*
+ * i386 Interrupt Descriptor Table initialization.
+ *
+ * Installs CPU exception vectors, remapped PIC IRQ vectors, and user-callable
+ * syscall gate at INT 0x80.
+ */
+
 #define IDT_ENTRIES 256
 #define KERNEL_CS 0x08  // Kernel Code Segment selector from GDT.
 
@@ -20,6 +27,7 @@ idt_ptr_t   idt_ptr;                 // Pointer structure for lidt.
 
 // Sets an entry in the IDT.
 static void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags) {
+    /* Populate one IDT entry with handler address, selector, and gate flags. */
     idt_entries[num].base_low  = (base & 0xFFFF);
     idt_entries[num].base_high = (base >> 16) & 0xFFFF;
     idt_entries[num].selector  = sel;
@@ -29,6 +37,7 @@ static void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags
 
 // Initializes the IDT.
 void init_idt() {
+    /* Build full IDT table and load IDTR via `idt_load`. */
     idt_ptr.limit = (sizeof(idt_entry_t) * IDT_ENTRIES) - 1;
     idt_ptr.base  = (uint32_t)&idt_entries;
 

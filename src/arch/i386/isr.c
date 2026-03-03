@@ -16,6 +16,13 @@
 #include <debug.h>         // For panic_screen and other debug facilities
 #include <io.h>            // For outb()
 
+/*
+ * i386 interrupt/exception dispatch layer.
+ *
+ * Receives register snapshots from assembly stubs, routes to registered C
+ * handlers, acknowledges PIC IRQs, and invokes panic flow on unhandled faults.
+ */
+
 // Array of registered C interrupt handlers. Indexed by interrupt number.
 static isr_t interrupt_handlers[256]; // Initialized to 0 (NULL pointers) by C default for static storage.
 
@@ -38,6 +45,7 @@ const char *exception_messages[] = {
 // Common handler for CPU exceptions and software interrupts (ISRs 0-31, 128, etc).
 // regs pointer is passed from assembly stub via 'push esp; call isr_handler_common'
 void isr_handler_common(registers_t* regs) {
+    /* Dispatch CPU exception/software interrupt or panic if unhandled. */
     // Check if there's a registered handler for this interrupt
     // This allows software interrupts (like INT 0x80 syscall) to be handled
     if (interrupt_handlers[regs->int_no] != 0) {
@@ -70,6 +78,7 @@ void isr_handler_common(registers_t* regs) {
 // Common handler for hardware IRQs (ISRs 32-47).
 // regs pointer is passed from assembly stub via 'push esp; call irq_handler_common'
 void irq_handler_common(registers_t* regs) {
+    /* Acknowledge PIC and dispatch hardware IRQ handler when registered. */
     // Send EOI (End of Interrupt) to the PICs.
     // If the IRQ came from the slave PIC (IRQ 8-15, which are INT 40-47),
     // an EOI must be sent to it.
@@ -101,6 +110,7 @@ void irq_handler_common(registers_t* regs) {
 
 // Registers a C function for a given interrupt number.
 void register_interrupt_handler(uint8_t n, isr_t handler) {
+    /* Install or replace C interrupt callback for vector `n`. */
     interrupt_handlers[n] = handler;
     // Optional: Print confirmation message.
     // itoa and serial_puts are expected to be linked.

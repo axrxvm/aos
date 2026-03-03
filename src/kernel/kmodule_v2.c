@@ -35,6 +35,15 @@
 #include <dev/pci.h>
 #include <crypto/sha256.h>
 
+/*
+ * Kernel Module System v2 runtime model
+ *
+ * - Supports AKM v2 bytecode/native modules with per-module capability masks.
+ * - Exposes constrained kernel APIs via `kmod_ctx_t` and capability checks.
+ * - Tracks module-owned resources (commands, timers, IRQ hooks) for cleanup.
+ * - Maintains isolated v2 registry to avoid unsafe coupling with legacy paths.
+ */
+
 // External memory info from kernel.c
 extern uint32_t total_memory_kb;
 
@@ -107,6 +116,7 @@ struct kmod_v2_entry {
 //                    CAPABILITY CHECK HELPERS
 
 static int check_cap(kmod_ctx_t* ctx, uint32_t cap) {
+    /* Capability gate for all exported module API handlers in this unit. */
     if (!ctx) return 0;
     return (ctx->capabilities & cap) != 0;
 }
@@ -115,6 +125,7 @@ static int check_cap(kmod_ctx_t* ctx, uint32_t cap) {
 
 // --- Logging ---
 static void api_log(kmod_ctx_t* ctx, int level, const char* fmt, ...) {
+    /* Module-scoped logger; emits `[module] [level]` prefixed records. */
     if (!ctx || !check_cap(ctx, KMOD_CAP_LOG)) return;
     
     const char* prefix = "";
@@ -236,6 +247,10 @@ static mod_cmd_entry_t* find_module_command(const char* name) {
 
 // Execute a module VM command
 int execute_module_vm_command(const char* cmd_name, const char* args) {
+    /*
+     * Dispatch command into module-owned AKM VM handler offset.
+     * VM state is reset per invocation to provide deterministic execution.
+     */
     if (!cmd_name) return -1;
     
     mod_cmd_entry_t* mod_cmd = find_module_command(cmd_name);

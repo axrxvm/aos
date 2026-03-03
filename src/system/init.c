@@ -20,6 +20,13 @@
 #include <arch.h>
 #include <process.h>
 
+/*
+ * Service init/runlevel manager.
+ *
+ * Maintains service registry, performs runlevel transitions, and starts/stops
+ * services based on configured runlevel masks and dependency expectations.
+ */
+
 // Maximum number of services
 #define MAX_SERVICES 32
 
@@ -38,6 +45,7 @@ static service_t* find_service(const char* name);
 
 // Helper function to print init messages
 static void init_log(const char* message) {
+    /* Emit init subsystem log line when verbose mode is enabled. */
     if (init_config.verbose_mode) {
         serial_puts("[INIT] ");
         serial_puts(message);
@@ -47,6 +55,7 @@ static void init_log(const char* message) {
 
 // Initialize the init system
 void init_system(void) {
+    /* Bootstrap init registry and reset runtime bookkeeping state. */
     init_log("Init system starting...");
     memset(service_registry, 0, sizeof(service_registry));
     registered_services = 0;
@@ -55,6 +64,7 @@ void init_system(void) {
 
 // Set the current runlevel
 void init_set_runlevel(runlevel_t level) {
+    /* Transition to new runlevel by stopping/starting matching services. */
     if (level != init_config.current_runlevel) {
         char buf[64];
         snprintf(buf, sizeof(buf), "Switching to runlevel %d", level);
@@ -83,6 +93,7 @@ runlevel_t init_get_runlevel(void) {
 
 // Register a service
 int init_register_service(service_t* service) {
+    /* Register service descriptor in init registry for later lifecycle control. */
     if (!service || registered_services >= MAX_SERVICES) {
         init_log("Failed to register service: too many services or null service");
         return -1;
@@ -134,6 +145,7 @@ static service_t* find_service(const char* name) {
 
 // Start a service by name
 int init_start_service(const char* name) {
+    /* Start one service and attach/track its task identity if available. */
     service_t* service = find_service(name);
     if (!service) {
         char buf[96];
@@ -179,6 +191,7 @@ int init_start_service(const char* name) {
 
 // Stop a service by name
 int init_stop_service(const char* name) {
+    /* Stop one service and finalize any associated kernel task record. */
     service_t* service = find_service(name);
     if (!service) {
         return -1;

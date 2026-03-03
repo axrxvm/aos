@@ -18,6 +18,13 @@
 #include <stdlib.h>
 #include <arch/pit.h>
 
+/*
+ * DHCP client implementation.
+ *
+ * Performs DISCOVER/OFFER/REQUEST/ACK exchange over UDP (67/68), parses lease
+ * options, and updates network interface configuration state.
+ */
+
 static dhcp_config_t dhcp_config;
 static uint32_t dhcp_xid = 0;
 static int dhcp_configured = 0;
@@ -25,11 +32,13 @@ static net_interface_t* dhcp_iface = NULL;
 
 // Generate random transaction ID
 static uint32_t dhcp_generate_xid(void) {
+    /* Generate per-attempt transaction ID seed from monotonic tick source. */
     return get_tick_count() ^ 0xDEADBEEF;
 }
 
 // Build DHCP option
 static int dhcp_add_option(uint8_t* options, int offset, uint8_t code, uint8_t len, const void* data) {
+    /* Append single TLV option to DHCP options buffer. */
     options[offset++] = code;
     options[offset++] = len;
     memcpy(&options[offset], data, len);
@@ -38,6 +47,7 @@ static int dhcp_add_option(uint8_t* options, int offset, uint8_t code, uint8_t l
 
 // Parse DHCP options
 static void dhcp_parse_options(const uint8_t* options, int len, dhcp_config_t* config) {
+    /* Parse subset of DHCP options used by aOS network configuration. */
     int i = 0;
     
     while (i < len && options[i] != DHCP_OPT_END) {
@@ -114,6 +124,7 @@ static void dhcp_parse_options(const uint8_t* options, int len, dhcp_config_t* c
 
 // DHCP receive callback
 static void dhcp_receive_callback(uint32_t src_ip, uint16_t src_port, const uint8_t* data, uint32_t len) {
+    /* Handle DHCP reply packets and store OFFER/ACK configuration details. */
     (void)src_ip;
     (void)src_port;
     
@@ -166,6 +177,7 @@ static void dhcp_receive_callback(uint32_t src_ip, uint16_t src_port, const uint
 
 // Send DHCP Discover with configurable timeouts (in PIT ticks).
 int dhcp_discover_timed(net_interface_t* iface, uint32_t offer_timeout_ticks, uint32_t ack_timeout_ticks) {
+    /* Execute DHCP handshake with explicit offer/ack timeout windows. */
     if (!iface) return -1;
     
     dhcp_iface = iface;

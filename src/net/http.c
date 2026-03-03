@@ -25,6 +25,13 @@
 #include <arch/pit.h>
 #include <fs/vfs.h>
 
+/*
+ * HTTP/HTTPS client subsystem.
+ *
+ * Handles URL parsing, request composition, response parsing, and optional TLS
+ * transport delegation for HTTPS endpoints.
+ */
+
 #define HTTP_VERSION "HTTP/1.1"
 #define HTTP_USER_AGENT "aOS/0.8 HttpClient/1.0"
 #define HTTP_CONNECT_TIMEOUT 10000
@@ -35,6 +42,7 @@
 
 
 void http_init(void) {
+    /* Initialize client subsystem state (currently stateless). */
     serial_puts("Initializing HTTP client...\n");
     serial_puts("HTTP client initialized.\n");
 }
@@ -44,6 +52,7 @@ void http_init(void) {
 
 
 int url_parse(const char* url_string, url_t* url) {
+    /* Parse URL into protocol/host/port/path/query components. */
     if (!url_string || !url) {
         return -1;
     }
@@ -124,6 +133,7 @@ int url_parse(const char* url_string, url_t* url) {
 
 
 http_request_t* http_request_create(const char* method, const char* url_string) {
+    /* Allocate and initialize request object including default headers. */
     if (!method || !url_string) {
         return NULL;
     }
@@ -173,6 +183,7 @@ void http_request_free(http_request_t* request) {
 }
 
 int http_request_add_header(http_request_t* request, const char* name, const char* value) {
+    /* Append outbound request header to fixed-capacity header array. */
     if (!request || !name || !value) {
         return -1;
     }

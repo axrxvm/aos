@@ -14,10 +14,18 @@
 #include <syscall.h>
 #include <vga.h>
 
+/*
+ * Environment variable store.
+ *
+ * Provides global key/value env map with load/save helpers and startup-script
+ * support for shell/session initialization.
+ */
+
 static envar_t global_envars[MAX_ENVARS];
 static int envar_count = 0;
 
 void envars_init(void) {
+    /* Reset env table and install baseline defaults for shell/runtime. */
     serial_puts("Initializing environment variables...\n");
     
     memset(global_envars, 0, sizeof(global_envars));
@@ -35,6 +43,7 @@ void envars_init(void) {
 }
 
 const char* envar_get(const char* name) {
+    /* Lookup env variable value by name. */
     if (!name) return NULL;
     
     for (int i = 0; i < MAX_ENVARS; i++) {
@@ -48,6 +57,7 @@ const char* envar_get(const char* name) {
 }
 
 int envar_set(const char* name, const char* value) {
+    /* Insert or update env variable in fixed-capacity table. */
     if (!name || !value) return -1;
     
     // Check if already exists
@@ -106,6 +116,7 @@ void envar_list(void) {
 }
 
 int envar_load_from_file(const char* path) {
+    /* Parse NAME=VALUE lines from file into environment table. */
     int fd = sys_open(path, O_RDONLY);
     if (fd < 0) {
         return -1;
@@ -164,6 +175,7 @@ int envar_load_from_file(const char* path) {
 }
 
 int envar_save_to_file(const char* path) {
+    /* Serialize current env table to file as NAME=VALUE lines. */
     int fd = sys_open(path, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
         return -1;

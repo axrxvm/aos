@@ -17,6 +17,13 @@
 #include <arch/paging.h>
 #include <multiboot.h>
 
+/*
+ * VGA/VBE display subsystem.
+ *
+ * Supports text-mode console, scrollback history, cursor management, and VBE
+ * graphics mode operations with optional back-buffering.
+ */
+
 #define SCROLLBACK_LINES 100
 
 // GLOBAL STATE VARIABLES
@@ -72,6 +79,7 @@ static inline void swap_int(int* a, int* b) { int t = *a; *a = *b; *b = t; }
 static inline void swap_u16(uint16_t* a, uint16_t* b) { uint16_t t = *a; *a = *b; *b = t; }
 
 void vga_init(void) {
+    /* Initialize text console state and hardware cursor defaults. */
     vga_clear();
     vga_row = 0;
     vga_col = 0;
@@ -86,6 +94,7 @@ void vga_init(void) {
 }
 
 void vga_set_multiboot_info(multiboot_info_t* mbi) {
+    /* Store bootloader-provided framebuffer/VBE metadata for mode detection. */
     grub_mbi = mbi;
     serial_puts("VGA: Boot info registered (multiboot-compatible)\n");
     
@@ -98,6 +107,7 @@ void vga_set_multiboot_info(multiboot_info_t* mbi) {
 }
 
 void vga_putc(char c) {
+    /* Render one character into live text buffer with wrapping/scroll support. */
     // If we're scrolled back, auto-scroll to bottom on new output
     if (scroll_offset > 0) {
         vga_scroll_to_bottom();
@@ -137,12 +147,14 @@ void vga_putc(char c) {
 }
 
 void vga_puts(const char *s) {
+    /* Render null-terminated string via per-character console output path. */
     while (*s) {
         vga_putc(*s++);
     }
 }
 
 void vga_clear(void) {
+    /* Clear active screen while preserving prior visible lines in scrollback. */
     // Save all current screen lines to scrollback before clearing
     for (int row = 0; row < VGA_HEIGHT; row++) {
         // Check if line has any non-space content

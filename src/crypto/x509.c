@@ -14,6 +14,13 @@
 #include <stdlib.h>
 #include <vmm.h>
 
+/*
+ * Minimal X.509 parser.
+ *
+ * Focuses on ASN.1 traversal sufficient to extract SubjectPublicKeyInfo
+ * (RSA public key material) for TLS certificate verification workflows.
+ */
+
 // ASN.1 Tags
 #define ASN1_SEQUENCE           0x30
 #define ASN1_INTEGER            0x02
@@ -27,6 +34,7 @@
 // Get ASN.1 tag and length
 int asn1_get_tag_length(const uint8_t* data, uint32_t* tag, uint32_t* length, 
                         uint32_t* header_len) {
+    /* Parse ASN.1 tag + length header (short and long forms). */
     *tag = data[0];
     
     if (data[1] & 0x80) {
@@ -51,6 +59,7 @@ int asn1_get_tag_length(const uint8_t* data, uint32_t* tag, uint32_t* length,
 // Find a sequence in ASN.1 data
 int asn1_find_sequence(const uint8_t* data, uint32_t data_len, 
                        const uint8_t** seq_start, uint32_t* seq_len) {
+    /* Validate top-level SEQUENCE and return payload pointer/length. */
     if (data_len < 2) return -1;
     
     uint32_t tag, length, header_len;
@@ -70,6 +79,7 @@ int asn1_find_sequence(const uint8_t* data, uint32_t data_len,
 // Parse ASN.1 integer
 int asn1_parse_integer(const uint8_t* data, uint32_t data_len,
                        const uint8_t** int_data, uint32_t* int_len) {
+    /* Parse ASN.1 INTEGER and normalize away optional sign-padding byte. */
     if (data_len < 2) return -1;
     
     uint32_t tag, length, header_len;
@@ -97,6 +107,7 @@ int asn1_parse_integer(const uint8_t* data, uint32_t data_len,
 // Simplified parser - only extracts RSA public key from SubjectPublicKeyInfo
 int x509_parse_certificate(const uint8_t* cert_data, uint32_t cert_len,
                            rsa_public_key_t* public_key) {
+    /* Parse DER certificate structure and extract RSA SubjectPublicKeyInfo. */
     const uint8_t* ptr = cert_data;
     uint32_t remaining = cert_len;
     

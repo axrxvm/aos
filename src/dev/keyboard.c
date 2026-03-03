@@ -13,6 +13,13 @@
 #include <io.h> //for inb and outb
 #include <dev/mouse.h> // For mouse_handle_interrupt
 
+/*
+ * PS/2 keyboard input driver.
+ *
+ * Tracks modifier-key state, decodes scan codes (including extended prefixes),
+ * and translates to shell-consumable character/special-key codes.
+ */
+
 #define KEYBOARD_PORT 0x60
 
 // Keyboard state flags
@@ -54,6 +61,7 @@ uint8_t keyboard_is_alt_pressed(void) {
 }
 
 void keyboard_init(void) {
+    /* Initialize controller channel and clear stale buffered scan codes. */
     // Basic PS/2 initialization (enable scanning)
     outb(0x64, 0xAE); // Enable keyboard
     
@@ -68,6 +76,7 @@ void keyboard_init(void) {
 }
 
 void keyboard_flush_buffer(void) {
+    /* Drain pending bytes from controller output buffer. */
     // Read and discard any pending data from PS/2 controller
     for (int i = 0; i < 16; i++) {
         uint8_t status = inb(0x64);
@@ -80,6 +89,7 @@ void keyboard_flush_buffer(void) {
 }
 
 uint8_t keyboard_get_scancode(void) {
+    /* Read one byte from PS/2 output buffer; route aux bytes to mouse driver. */
     uint8_t status = inb(0x64);
     
     // Check if data is available (bit 0)
@@ -98,6 +108,7 @@ uint8_t keyboard_get_scancode(void) {
 }
 
 char scancode_to_char(uint8_t scancode) {
+    /* Convert raw scancode stream to ASCII/control key values with modifiers. */
     // Handle extended scancode prefix (0xE0)
     if (scancode == SCANCODE_EXTENDED) {
         extended_scancode = 1;

@@ -22,6 +22,13 @@
 #include <serial.h>
 #include <arch/pit.h>
 
+/*
+ * TCP transport layer.
+ *
+ * Implements socket table management, connection state transitions, segment
+ * checksum handling, retransmission timing, and RX/TX buffering semantics.
+ */
+
 #define MAX_TCP_SOCKETS 32
 #define TCP_RX_BUFFER_SIZE 16384
 #define TCP_TX_BUFFER_SIZE 4096
@@ -53,6 +60,7 @@ typedef struct {
 
 static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dest_ip, 
                               const uint8_t* tcp_data, uint32_t tcp_len) {
+    /* Compute TCP checksum including IPv4 pseudo-header. */
     uint32_t sum = 0;
     
     // Add pseudo-header fields directly (they're already in network byte order)
@@ -88,6 +96,7 @@ static uint16_t tcp_checksum(uint32_t src_ip, uint32_t dest_ip,
 
 
 void tcp_init(void) {
+    /* Initialize TCP socket table and put all sockets in CLOSED state. */
     serial_puts("Initializing TCP...\n");
     
     memset(tcp_sockets, 0, sizeof(tcp_sockets));
@@ -105,6 +114,7 @@ void tcp_init(void) {
 
 static tcp_socket_t* tcp_find_socket(uint16_t local_port, uint32_t remote_ip, 
                                       uint16_t remote_port) {
+    /* Resolve best socket candidate: exact match, then listener, then port-only. */
     // First, look for exact match (connected socket)
     for (int i = 0; i < MAX_TCP_SOCKETS; i++) {
         tcp_socket_t* sock = &tcp_sockets[i];
@@ -139,6 +149,7 @@ static tcp_socket_t* tcp_find_socket(uint16_t local_port, uint32_t remote_ip,
 
 
 static int tcp_rx_buffer_write(tcp_socket_t* sock, const uint8_t* data, uint32_t len) {
+    /* Append payload bytes into circular receive buffer with bounds checks. */
     if (!sock || !data || len == 0) {
         return -1;
     }
@@ -175,6 +186,7 @@ static int tcp_rx_buffer_write(tcp_socket_t* sock, const uint8_t* data, uint32_t
 }
 
 static int tcp_rx_buffer_read(tcp_socket_t* sock, uint8_t* buffer, uint32_t len) {
+    /* Drain payload bytes from circular receive buffer into caller buffer. */
     if (!sock || !buffer || len == 0) {
         return 0;
     }

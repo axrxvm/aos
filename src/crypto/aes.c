@@ -17,6 +17,13 @@
 #include <crypto/aes.h>
 #include <string.h>
 
+/*
+ * AES-128 block cipher implementation.
+ *
+ * Implements key expansion and core round transforms for encryption/decryption
+ * paths used by TLS and other confidentiality features.
+ */
+
 // AES S-box (substitution box)
 static const uint8_t sbox[256] = {
     0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
@@ -64,11 +71,13 @@ static const uint8_t rcon[11] = {
 
 // Galois field multiplication by 2
 static uint8_t gf_mul2(uint8_t x) {
+    /* Multiply by x in GF(2^8) with AES reduction polynomial. */
     return (x << 1) ^ (((x >> 7) & 1) * 0x1b);
 }
 
 // Key expansion for AES-128
 static void key_expansion(const uint8_t* key, uint32_t* round_keys) {
+    /* Expand 128-bit key into 11 round-key schedule words. */
     // Copy initial key
     for (int i = 0; i < 4; i++) {
         round_keys[i] = (key[4*i] << 24) | (key[4*i+1] << 16) | 
@@ -99,6 +108,7 @@ static void key_expansion(const uint8_t* key, uint32_t* round_keys) {
 
 // SubBytes transformation
 static void sub_bytes(uint8_t* state) {
+    /* Apply forward S-box substitution to all state bytes. */
     for (int i = 0; i < 16; i++) {
         state[i] = sbox[state[i]];
     }
@@ -113,6 +123,7 @@ static void inv_sub_bytes(uint8_t* state) {
 
 // ShiftRows transformation
 static void shift_rows(uint8_t* state) {
+    /* Apply AES row-rotation permutation step. */
     uint8_t temp;
     
     // Row 1: shift left by 1
@@ -167,6 +178,7 @@ static void inv_shift_rows(uint8_t* state) {
 
 // MixColumns transformation
 static void mix_columns(uint8_t* state) {
+    /* Apply AES column mixing over GF(2^8). */
     for (int i = 0; i < 4; i++) {
         uint8_t s0 = state[i*4];
         uint8_t s1 = state[i*4 + 1];

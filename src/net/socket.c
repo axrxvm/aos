@@ -13,10 +13,18 @@
 #include <stdlib.h>
 #include <serial.h>
 
+/*
+ * Socket API compatibility layer.
+ *
+ * Provides BSD-like socket calls mapped to internal TCP/UDP socket objects.
+ * This unit handles descriptor allocation and protocol-family dispatch.
+ */
+
 // Socket table
 static socket_t socket_table[MAX_SOCKETS];
 
 int socket_create(int domain, int type, int protocol) {
+    /* Allocate descriptor slot and instantiate protocol-specific socket backend. */
     if (domain != AF_INET) {
         serial_puts("Socket: Unsupported address family\n");
         return -1;
@@ -65,6 +73,7 @@ int socket_create(int domain, int type, int protocol) {
 }
 
 int socket_bind(int sockfd, const sockaddr_in_t* addr) {
+    /* Bind socket to local address/port. */
     socket_t* sock = socket_get(sockfd);
     if (!sock || !addr) {
         return -1;
@@ -121,6 +130,7 @@ int socket_accept(int sockfd, sockaddr_in_t* addr) {
 }
 
 int socket_connect(int sockfd, const sockaddr_in_t* addr) {
+    /* Connect stream/datagram socket to remote endpoint. */
     socket_t* sock = socket_get(sockfd);
     if (!sock || !addr) {
         return -1;
@@ -139,6 +149,7 @@ int socket_connect(int sockfd, const sockaddr_in_t* addr) {
 }
 
 int socket_send(int sockfd, const uint8_t* data, uint32_t len, int flags) {
+    /* Send payload through socket according to descriptor type. */
     (void)flags;  // Not implemented yet
     
     socket_t* sock = socket_get(sockfd);
@@ -156,6 +167,7 @@ int socket_send(int sockfd, const uint8_t* data, uint32_t len, int flags) {
 }
 
 int socket_recv(int sockfd, uint8_t* buffer, uint32_t len, int flags) {
+    /* Receive payload through socket according to descriptor type. */
     (void)flags;  // Not implemented yet
     
     socket_t* sock = socket_get(sockfd);

@@ -14,6 +14,13 @@
 #include <stdlib.h>
 #include <serial.h>
 
+/*
+ * ARP protocol layer.
+ *
+ * Maintains IPv4->MAC cache with timeout-based invalidation and handles ARP
+ * request/reply exchanges for Ethernet interfaces.
+ */
+
 // ARP cache
 static arp_cache_entry_t arp_cache[ARP_CACHE_SIZE];
 
@@ -21,6 +28,7 @@ static arp_cache_entry_t arp_cache[ARP_CACHE_SIZE];
 extern uint32_t get_tick_count(void);
 
 void arp_init(void) {
+    /* Initialize ARP cache and protocol state. */
     serial_puts("Initializing ARP...\n");
     
     // Clear ARP cache
@@ -30,6 +38,7 @@ void arp_init(void) {
 }
 
 int arp_receive(net_interface_t* iface, net_packet_t* packet) {
+    /* Process inbound ARP packet and optionally emit reply if queried target is us. */
     if (!packet || packet->len < sizeof(arp_packet_t)) {
         return -1;
     }
@@ -61,6 +70,7 @@ int arp_receive(net_interface_t* iface, net_packet_t* packet) {
 }
 
 int arp_send_request(net_interface_t* iface, uint32_t target_ip) {
+    /* Broadcast ARP query for unresolved target IPv4 address. */
     if (!iface) return -1;
     
     arp_packet_t arp;
@@ -109,6 +119,7 @@ int arp_send_reply(net_interface_t* iface, uint32_t target_ip, const mac_addr_t*
 }
 
 int arp_cache_lookup(uint32_t ip_addr, mac_addr_t* mac_addr) {
+    /* Resolve cached mapping if present and not expired. */
     uint32_t current_time = get_tick_count();
     
     for (int i = 0; i < ARP_CACHE_SIZE; i++) {
@@ -130,6 +141,7 @@ int arp_cache_lookup(uint32_t ip_addr, mac_addr_t* mac_addr) {
 }
 
 void arp_cache_add(uint32_t ip_addr, const mac_addr_t* mac_addr) {
+    /* Insert/update cache entry; evict oldest record when cache is full. */
     if (!mac_addr) return;
     
     uint32_t current_time = get_tick_count();

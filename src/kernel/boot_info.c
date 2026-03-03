@@ -16,6 +16,18 @@
 #include <abl_boot.h>
 #include <string.h>
 
+/*
+ * Boot information normalization layer.
+ *
+ * Goal: present a single `boot_runtime_info_t` view regardless of whether
+ * boot was performed through Multiboot1, Multiboot2, or ABL protocol.
+ *
+ * This file owns:
+ * - compatibility buffers for multiboot-style consumers
+ * - module/memory-map extraction and bounds-limited copies
+ * - derived lower/upper memory calculations used during early PMM init
+ */
+
 extern void kprint(const char *str);
 
 #define BOOTINFO_MAX_MODULES      32
@@ -30,6 +42,7 @@ static multiboot_vbe_mode_info_t g_vbe_mode_info;
 static const char g_abl_bootloader_name[] = "ABL";
 
 static uint32_t align_up_8(uint32_t value) {
+    /* Multiboot map entries are 8-byte aligned; keep cursor progression safe. */
     return (value + 7U) & ~7U;
 }
 
@@ -53,6 +66,7 @@ static void format_hex64(uint64_t value, char* out, size_t out_len) {
 }
 
 static void reset_boot_runtime(void) {
+    /* Reinitialize all persistent boot metadata structures to known-zero state. */
     memset(&g_boot_runtime, 0, sizeof(g_boot_runtime));
     memset(&g_compat_mbi, 0, sizeof(g_compat_mbi));
     memset(g_module_entries, 0, sizeof(g_module_entries));
@@ -63,6 +77,7 @@ static void reset_boot_runtime(void) {
 }
 
 static uint32_t count_multiboot1_mmap_entries(const multiboot_info_t* mbi) {
+    /* Count valid memory-map entries while guarding malformed length fields. */
     if (!mbi) {
         return 0;
     }
@@ -103,6 +118,10 @@ static void derive_memory_kib_from_mmap(const multiboot_memory_map_t* entries,
                                         uint32_t count,
                                         uint32_t* out_lower_kib,
                                         uint32_t* out_upper_kib) {
+    /*
+     * Compute conventional low memory (<1MiB) and total upper memory values
+     * from available memory-map ranges.
+     */
     if (out_lower_kib) {
         *out_lower_kib = 0;
     }

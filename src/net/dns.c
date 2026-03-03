@@ -22,6 +22,13 @@
 #include <serial.h>
 #include <arch/pit.h>
 
+/*
+ * DNS resolver subsystem.
+ *
+ * Provides hostname resolution over UDP with configurable server list, retry
+ * logic, timeout handling, and in-memory response caching.
+ */
+
 
 // Configuration
 
@@ -45,17 +52,20 @@ static uint16_t dns_transaction_id = 1;
 
 
 static uint16_t dns_generate_id(void) {
+    /* Generate monotonically increasing DNS transaction ID. */
     return dns_transaction_id++;
 }
 
 // Network polling function
 static void dns_poll_network(void) {
+    /* Drive lower network layers while waiting for DNS responses. */
     net_poll();  // Poll all network interfaces (e1000, pcnet, etc.)
     ipv4_process_pending();
 }
 
 // Yield to interrupts - allows packet reception
 static void dns_yield(void) {
+    /* Yield CPU until interrupt to avoid busy-wait starvation in polling loops. */
     // HLT waits for next interrupt (timer tick, NIC interrupt, etc.)
     // This is critical - without it, we spin too fast for the NIC to process
     __asm__ volatile("sti");  // Ensure interrupts enabled
@@ -75,6 +85,7 @@ static void dns_delay(uint32_t iterations) {
 
 
 void dns_init(void) {
+    /* Initialize DNS cache and default public resolvers. */
     serial_puts("Initializing DNS resolver...\n");
     
     memset(dns_cache, 0, sizeof(dns_cache));
@@ -113,6 +124,7 @@ void dns_set_retry_count(uint8_t count) {
 
 
 int dns_encode_name(const char* hostname, uint8_t* buffer, int max_len) {
+    /* Encode dotted hostname into DNS label format. */
     if (!hostname || !buffer || max_len < 2) {
         return -1;
     }
@@ -151,6 +163,7 @@ int dns_encode_name(const char* hostname, uint8_t* buffer, int max_len) {
 
 int dns_decode_name(const uint8_t* packet, int packet_len, int offset, 
                     char* name, int max_name_len) {
+    /* Decode DNS-encoded name with compression-pointer support. */
     if (!packet || !name || offset < 0 || offset >= packet_len) {
         return -1;
     }

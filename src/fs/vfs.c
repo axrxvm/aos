@@ -17,6 +17,18 @@
 #include <fileperm.h>
 #include <process.h>
 
+/*
+ * Virtual File System (VFS)
+ *
+ * This layer provides:
+ * - Filesystem driver registration (`vfs_register_filesystem`)
+ * - Mount table management and root vnode selection
+ * - Global file descriptor table for active file handles
+ * - Path normalization + traversal utilities shared by syscalls/shell
+ *
+ * Filesystem-specific behavior is delegated through filesystem op tables.
+ */
+
 // Maximum number of file descriptors
 #define MAX_FDS 256
 #define MAX_FILESYSTEMS 16
@@ -43,6 +55,7 @@ static vnode_t* cwd = NULL;
 static char cwd_path[256] = "/";
 
 void vfs_init(void) {
+    /* Reset all global VFS state for cold boot. */
     serial_puts("Initializing VFS...\n");
     
     // Initialize file descriptor table
@@ -75,6 +88,7 @@ void vfs_init(void) {
 }
 
 int vfs_register_filesystem(filesystem_t* fs) {
+    /* Register a filesystem driver by unique name and operation table. */
     if (!fs || !fs->name || !fs->ops) {
         return VFS_ERR_INVALID;
     }
@@ -140,6 +154,10 @@ static mount_t* find_mount_by_path(const char* path) {
 }
 
 int vfs_mount(const char* source, const char* target, const char* fstype, uint32_t flags) {
+    /*
+     * Mount a registered filesystem instance at `target`.
+     * If `target` is `/`, the returned root vnode becomes VFS global root.
+     */
     serial_puts("vfs_mount: entry\n");
     
     if (!target || !fstype) {
@@ -252,6 +270,12 @@ int vfs_unmount(const char* target) {
 
 // Normalize path (resolve . and .., remove duplicate /)
 char* vfs_normalize_path(const char* path) {
+    /*
+     * Normalize absolute/relative paths:
+     * - resolves `.` and `..`
+     * - collapses duplicate separators
+     * - prefixes relative paths with current working directory
+     */
     if (!path || path[0] == '\0') {
         serial_puts("VFS: normalize_path - null or empty path\n");
         return NULL;

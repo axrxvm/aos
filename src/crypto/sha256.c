@@ -11,6 +11,13 @@
 #include <crypto/sha256.h>
 #include <string.h>
 
+/*
+ * SHA-256 hash implementation.
+ *
+ * Provides incremental update/finalize API used across authentication,
+ * integrity checks, password hashing, and network security subsystems.
+ */
+
 // SHA-256 constants (first 32 bits of fractional parts of cube roots of first 64 primes) (ik its too much meth)
 static const uint32_t K[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -63,6 +70,7 @@ static inline void cpu_to_be64(uint8_t* p, uint64_t v) {
 
 // Process a single 512-bit block
 static void sha256_transform(sha256_ctx_t* ctx, const uint8_t* data) {
+    /* Compress one 512-bit message block into hash state. */
     uint32_t W[64];
     uint32_t a, b, c, d, e, f, g, h;
     uint32_t T1, T2;
@@ -113,6 +121,7 @@ static void sha256_transform(sha256_ctx_t* ctx, const uint8_t* data) {
 }
 
 void sha256_init(sha256_ctx_t* ctx) {
+    /* Initialize SHA-256 context with standard IV constants. */
     if (!ctx) return;
     
     // Initialize state with SHA-256 initial hash values
@@ -131,6 +140,7 @@ void sha256_init(sha256_ctx_t* ctx) {
 }
 
 void sha256_update(sha256_ctx_t* ctx, const uint8_t* data, size_t len) {
+    /* Absorb arbitrary-length input stream into block buffer/state. */
     if (!ctx || !data) return;
     
     size_t buffer_space = SHA256_BLOCK_SIZE - (ctx->count % SHA256_BLOCK_SIZE);

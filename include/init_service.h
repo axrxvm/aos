@@ -7,6 +7,15 @@
  * === AOS HEADER END ===
  */
 
+/*
+ * DEVELOPER_NOTE_BLOCK
+ * Module Overview:
+ * - This file is part of the aOS production kernel/userspace codebase.
+ * - Review public symbols in this unit to understand contracts with adjacent modules.
+ * - Keep behavior-focused comments near non-obvious invariants, state transitions, and safety checks.
+ * - Avoid changing ABI/data-layout assumptions without updating dependent modules.
+ */
+
 
 /*
  * Init System Service Registry - init.d style service scripts

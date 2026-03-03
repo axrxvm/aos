@@ -50,6 +50,12 @@ static void print_hex(const char* prefix, uintptr_t value) {
 }
 
 void userspace_init(void) {
+    /*
+     * Prepare kernel-side userspace services.
+     *
+     * This does not switch privilege levels yet; it initializes command and
+     * shell infrastructure required by both ring 3 and ring 0 fallback modes.
+     */
     serial_puts("=== Userspace Initialization ===\n");
 
     serial_puts("Initializing command registry...\n");
@@ -64,6 +70,17 @@ void userspace_init(void) {
 }
 
 void userspace_run(void) {
+    /*
+     * Enter the default ring 3 userspace environment.
+     *
+     * Preconditions:
+     * - paging/VMM are active
+     * - current process exists
+     * - embedded `aosh` payload symbols are linked into kernel image
+     *
+     * Failure policy: any unrecoverable setup failure drops to legacy ring 0
+     * shell (`userspace_run_legacy`) to preserve interactive recoverability.
+     */
     serial_puts("=== Starting Ring 3 Userspace Shell ===\n");
 
     extern process_t* process_get_current(void);
@@ -177,6 +194,12 @@ void userspace_run(void) {
 
 // Legacy ring 0 shell fallback
 void userspace_run_legacy(void) {
+    /*
+     * Emergency compatibility shell path.
+     *
+     * Used when ring 3 launch cannot be completed. Keeps system operable for
+     * admin actions, debugging, and recovery on constrained/broken setups.
+     */
     serial_puts("Starting legacy ring 0 shell...\n");
     process_set_current_identity("aosh-legacy", TASK_TYPE_SHELL, PRIORITY_NORMAL, 0);
 

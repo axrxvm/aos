@@ -18,6 +18,19 @@ global switch_context
 ;   +0 eax, +8 ebx, +16 ecx, +24 edx, +32 esi, +40 edi,
 ;   +48 ebp, +56 esp, +64 eip, +72 eflags, +80 cr3,
 ;   +88 r12, +96 r13, +104 r14, +112 r15
+;
+; Execution model:
+; 1) Save current CPU state to *old_context
+; 2) Load address-space root (CR3) from *new_context
+; 3) Restore callee/caller-visible state from *new_context
+; 4) Jump directly to saved RIP of target task
+;
+; Notes for maintainers:
+; - Field names are kept as legacy x86 names in cpu_context_t even on x86_64.
+; - RSP is restored from the target context, so return-based control transfer is
+;   not valid here; final transfer is a direct JMP to saved RIP.
+; - Segment register reload is intentionally omitted on long mode path because
+;   flat model is used and only CR3 + GPR/FPU-neutral state is required here.
 
 switch_context:
     mov r8, rdi

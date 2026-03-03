@@ -15,6 +15,17 @@
 #include <pmm.h>
 #include <vmm.h>
 
+/*
+ * Inter-process communication subsystem.
+ *
+ * Provides two IPC models:
+ * - lightweight message signaling (`msg_*`) for control events
+ * - byte-stream-like in-kernel channels (`channel_*`) for payload exchange
+ *
+ * Note: message queues/handlers are partially stubbed and intentionally marked
+ * TODO until full per-process queueing lands.
+ */
+
 // Global IPC structures
 static channel_t* channel_list = NULL;
 static shared_region_t* region_list = NULL;
@@ -22,6 +33,7 @@ static int next_channel_id = 1;
 
 // Initialize IPC subsystem
 void init_ipc(void) {
+    /* Initialize global IPC registries during kernel bootstrap. */
     serial_puts("Initializing IPC subsystem...\n");
     channel_list = NULL;
     region_list = NULL;
@@ -32,6 +44,7 @@ void init_ipc(void) {
 // ===== Message Events Implementation =====
 
 int msg_send(pid_t target_pid, int msg_num, uint32_t data) {
+    /* Send best-effort control signal to target process. */
     (void)data;  // Reserved for future use
     
     process_t* target = process_get_by_pid(target_pid);
@@ -69,6 +82,7 @@ void msg_dispatch_pending(void) {
 // ===== Communication Channels Implementation =====
 
 int channel_create(void) {
+    /* Create kernel-resident channel object and return channel ID handle. */
     // Allocate new channel
     channel_t* channel = (channel_t*)kmalloc(sizeof(channel_t));
     if (!channel) {
