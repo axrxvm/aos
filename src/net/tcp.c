@@ -39,8 +39,102 @@
 // TCP socket table
 static tcp_socket_t tcp_sockets[MAX_TCP_SOCKETS];
 
+#define TCP_MAX_ACCEPT_BACKLOG 16
+
+typedef struct {
+    tcp_socket_t* listener;
+    tcp_socket_t* pending[TCP_MAX_ACCEPT_BACKLOG];
+    uint16_t head;
+    uint16_t tail;
+    uint16_t count;
+    uint16_t max_backlog;
+} tcp_accept_queue_t;
+
+static tcp_accept_queue_t accept_queues[MAX_TCP_SOCKETS];
+
 // Ephemeral port counter
 static uint16_t next_ephemeral_port = 49152;
+
+static int tcp_socket_index(const tcp_socket_t* sock) {
+    if (!sock) {
+        return -1;
+    }
+
+    if (sock < &tcp_sockets[0] || sock >= &tcp_sockets[MAX_TCP_SOCKETS]) {
+        return -1;
+    }
+
+    return (int)(sock - &tcp_sockets[0]);
+}
+
+static tcp_accept_queue_t* get_accept_queue(tcp_socket_t* listener, int create_if_missing) {
+    int index = tcp_socket_index(listener);
+    if (index < 0) {
+        return NULL;
+    }
+
+    tcp_accept_queue_t* queue = &accept_queues[index];
+    if (queue->listener == listener) {
+        return queue;
+    }
+
+    if (!create_if_missing) {
+        return NULL;
+    }
+
+    memset(queue, 0, sizeof(*queue));
+    queue->listener = listener;
+    queue->max_backlog = 1;
+    return queue;
+}
+
+static int accept_queue_enqueue(tcp_accept_queue_t* queue, tcp_socket_t* child) {
+    if (!queue || !child) {
+        return -1;
+    }
+
+    uint16_t limit = queue->max_backlog;
+    if (limit == 0 || limit > TCP_MAX_ACCEPT_BACKLOG) {
+        limit = TCP_MAX_ACCEPT_BACKLOG;
+    }
+
+    if (queue->count >= limit) {
+        return -1;
+    }
+
+    queue->pending[queue->tail] = child;
+    queue->tail = (queue->tail + 1) % TCP_MAX_ACCEPT_BACKLOG;
+    queue->count++;
+    return 0;
+}
+
+static tcp_socket_t* accept_queue_dequeue_established(tcp_accept_queue_t* queue) {
+    if (!queue || queue->count == 0) {
+        return NULL;
+    }
+
+    uint16_t entries = queue->count;
+    for (uint16_t i = 0; i < entries; i++) {
+        tcp_socket_t* candidate = queue->pending[queue->head];
+        queue->pending[queue->head] = NULL;
+        queue->head = (queue->head + 1) % TCP_MAX_ACCEPT_BACKLOG;
+        queue->count--;
+
+        if (!candidate || !candidate->bound || candidate->state == TCP_CLOSED) {
+            continue;
+        }
+
+        if (candidate->state == TCP_ESTABLISHED) {
+            return candidate;
+        }
+
+        queue->pending[queue->tail] = candidate;
+        queue->tail = (queue->tail + 1) % TCP_MAX_ACCEPT_BACKLOG;
+        queue->count++;
+    }
+
+    return NULL;
+}
 
 
 // TCP Pseudo-header for Checksum
@@ -100,6 +194,7 @@ void tcp_init(void) {
     serial_puts("Initializing TCP...\n");
     
     memset(tcp_sockets, 0, sizeof(tcp_sockets));
+    memset(accept_queues, 0, sizeof(accept_queues));
     
     for (int i = 0; i < MAX_TCP_SOCKETS; i++) {
         tcp_sockets[i].state = TCP_CLOSED;
@@ -304,7 +399,6 @@ int tcp_send(tcp_socket_t* sock, const uint8_t* data, uint32_t len, uint8_t flag
 int tcp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
                 net_packet_t* packet) {
     (void)iface;
-    (void)dest_ip;
     
     if (!packet || packet->len < TCP_HEADER_LEN) {
         return -1;
@@ -368,13 +462,28 @@ int tcp_receive(net_interface_t* iface, uint32_t src_ip, uint32_t dest_ip,
     switch (sock->state) {
         case TCP_LISTEN:
             if (flags & TCP_FLAG_SYN) {
-                sock->remote_ip = src_ip;
-                sock->remote_port = src_port;
-                sock->ack_num = seq_num + 1;
-                sock->state = TCP_SYN_RECEIVED;
-                
-                // Send SYN-ACK
-                tcp_send(sock, NULL, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
+                tcp_accept_queue_t* queue = get_accept_queue(sock, 1);
+                tcp_socket_t* child = tcp_socket_create();
+                if (!queue || !child) {
+                    return -1;
+                }
+
+                child->local_ip = dest_ip;
+                child->local_port = dest_port;
+                child->bound = 1;
+                child->remote_ip = src_ip;
+                child->remote_port = src_port;
+                child->ack_num = seq_num + 1;
+                child->state = TCP_SYN_RECEIVED;
+
+                if (accept_queue_enqueue(queue, child) != 0) {
+                    child->state = TCP_CLOSED;
+                    child->bound = 0;
+                    tcp_send(child, NULL, 0, TCP_FLAG_RST | TCP_FLAG_ACK);
+                    break;
+                }
+
+                tcp_send(child, NULL, 0, TCP_FLAG_SYN | TCP_FLAG_ACK);
             }
             break;
             
@@ -548,11 +657,26 @@ int tcp_socket_bind(tcp_socket_t* sock, uint32_t ip, uint16_t port) {
 }
 
 int tcp_socket_listen(tcp_socket_t* sock, int backlog) {
-    (void)backlog;
-    
     if (!sock || !sock->bound) {
         return -1;
     }
+
+    tcp_accept_queue_t* queue = get_accept_queue(sock, 1);
+    if (!queue) {
+        return -1;
+    }
+
+    if (backlog < 1) {
+        backlog = 1;
+    }
+    if (backlog > TCP_MAX_ACCEPT_BACKLOG) {
+        backlog = TCP_MAX_ACCEPT_BACKLOG;
+    }
+
+    queue->head = 0;
+    queue->tail = 0;
+    queue->count = 0;
+    queue->max_backlog = (uint16_t)backlog;
     
     sock->state = TCP_LISTEN;
     return 0;
@@ -562,9 +686,13 @@ tcp_socket_t* tcp_socket_accept(tcp_socket_t* sock) {
     if (!sock || sock->state != TCP_LISTEN) {
         return NULL;
     }
-    
-    // TODO: Implement proper accept queue
-    return NULL;
+
+    tcp_accept_queue_t* queue = get_accept_queue(sock, 0);
+    if (!queue) {
+        return NULL;
+    }
+
+    return accept_queue_dequeue_established(queue);
 }
 
 int tcp_socket_connect(tcp_socket_t* sock, uint32_t ip, uint16_t port) {
