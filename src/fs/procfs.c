@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <vmm.h>
+#include <cpu.h>
 
 typedef enum {
     PROC_NODE_ROOT = 0,
@@ -222,12 +223,28 @@ static int procfs_read_meminfo(void* buffer, uint32_t size, uint32_t offset) {
 }
 
 static int procfs_read_cpuinfo(void* buffer, uint32_t size, uint32_t offset) {
-    char scratch[256];
+    char scratch[512];
     uint32_t pos = 0;
+    const cpu_info_t* cpu = cpu_get_info();
 
     uint32_t pit_hz = PIT_BASE_FREQUENCY / PIT_DEFAULT_DIVISOR;
     pos = append_kv_str(scratch, sizeof(scratch), pos, "machine", "aos-core");
     pos = append_kv_str(scratch, sizeof(scratch), pos, "arch", arch_get_name());
+    if (cpu && cpu->valid) {
+        pos = append_kv_str(scratch, sizeof(scratch), pos, "vendor", cpu->vendor);
+        pos = append_kv_str(scratch, sizeof(scratch), pos, "model", cpu->brand[0] ? cpu->brand : "unknown");
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "family", cpu->family);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "model_id", cpu->model);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "stepping", cpu->stepping);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "detected_cpus", cpu->detected_cpus);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "online_cpus", cpu->online_cpus);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "cpuid_logical", cpu->logical_cpus_cpuid);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "cpuid_cores", cpu->physical_cores_cpuid);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "acpi_enabled", cpu->acpi_enabled_cpus);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "acpi_total", cpu->acpi_total_cpus);
+        pos = append_kv_hex(scratch, sizeof(scratch), pos, "lapic_base", cpu->lapic_mmio_base);
+        pos = append_kv_num(scratch, sizeof(scratch), pos, "bsp_lapic_id", cpu->bsp_lapic_id);
+    }
     pos = append_kv_num(scratch, sizeof(scratch), pos, "timer_hz", pit_hz);
     pos = append_kv_num(scratch, sizeof(scratch), pos, "tick_counter", system_ticks);
 

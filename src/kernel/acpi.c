@@ -30,6 +30,142 @@
 #include <stdbool.h>
 #include <arch_paging.h>
 
+#define MADT_SIGNATURE "APIC"
+
+typedef struct {
+    acpi_header_t header;
+    uint32_t lapic_address;
+    uint32_t flags;
+    uint8_t entries[];
+} __attribute__((packed)) madt_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t length;
+} __attribute__((packed)) madt_entry_header_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t length;
+    uint8_t acpi_processor_id;
+    uint8_t apic_id;
+    uint32_t flags;
+} __attribute__((packed)) madt_lapic_entry_t;
+
+typedef struct {
+    uint8_t type;
+    uint8_t length;
+    uint16_t reserved;
+    uint32_t x2apic_id;
+    uint32_t flags;
+    uint32_t acpi_uid;
+} __attribute__((packed)) madt_x2apic_entry_t;
+
+static const madt_t* g_madt = NULL;
+static acpi_cpu_topology_t g_cpu_topology;
+static acpi_cpu_id_list_t g_cpu_id_list_all;
+static acpi_cpu_id_list_t g_cpu_id_list_enabled;
+
+int acpi_get_cpu_id_list(acpi_cpu_id_list_t* list, bool enabled_only) {
+    if (!list) {
+        return -1;
+    }
+
+    const acpi_cpu_id_list_t* src = enabled_only ? &g_cpu_id_list_enabled : &g_cpu_id_list_all;
+    if (src->count == 0) {
+        return -1;
+    }
+
+    *list = *src;
+    return 0;
+}
+
+static int acpi_scan_madt_cpu_topology(void) {
+    if (!g_madt || g_madt->header.length < sizeof(madt_t)) {
+        return -1;
+    }
+
+    memset(&g_cpu_topology, 0, sizeof(g_cpu_topology));
+    memset(&g_cpu_id_list_all, 0, sizeof(g_cpu_id_list_all));
+    memset(&g_cpu_id_list_enabled, 0, sizeof(g_cpu_id_list_enabled));
+    g_cpu_topology.lapic_address = g_madt->lapic_address;
+
+    uint32_t eax = 1;
+    uint32_t ebx = 0;
+    uint32_t ecx = 0;
+    uint32_t edx = 0;
+    __asm__ volatile(
+        "cpuid"
+        : "+a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        :
+        : "memory"
+    );
+    g_cpu_topology.bsp_lapic_id = (uint8_t)((ebx >> 24) & 0xFF);
+
+    const uint8_t* begin = g_madt->entries;
+    const uint8_t* end = ((const uint8_t*)g_madt) + g_madt->header.length;
+    const uint8_t* ptr = begin;
+
+    while (ptr + sizeof(madt_entry_header_t) <= end) {
+        const madt_entry_header_t* hdr = (const madt_entry_header_t*)ptr;
+        if (hdr->length < sizeof(madt_entry_header_t) || ptr + hdr->length > end) {
+            break;
+        }
+
+        if (hdr->type == 0 && hdr->length >= sizeof(madt_lapic_entry_t)) {
+            const madt_lapic_entry_t* lapic = (const madt_lapic_entry_t*)ptr;
+            g_cpu_topology.total_count++;
+
+            if (g_cpu_id_list_all.count < ACPI_MAX_CPU_IDS) {
+                g_cpu_id_list_all.ids[g_cpu_id_list_all.count++] = lapic->apic_id;
+            }
+
+            if (lapic->flags & 0x1) {
+                g_cpu_topology.enabled_count++;
+                if (g_cpu_id_list_enabled.count < ACPI_MAX_CPU_IDS) {
+                    g_cpu_id_list_enabled.ids[g_cpu_id_list_enabled.count++] = lapic->apic_id;
+                }
+            } else {
+                g_cpu_topology.disabled_count++;
+            }
+        } else if (hdr->type == 9 && hdr->length >= sizeof(madt_x2apic_entry_t)) {
+            const madt_x2apic_entry_t* x2 = (const madt_x2apic_entry_t*)ptr;
+            g_cpu_topology.total_count++;
+
+            if (g_cpu_id_list_all.count < ACPI_MAX_CPU_IDS) {
+                g_cpu_id_list_all.ids[g_cpu_id_list_all.count++] = x2->x2apic_id;
+            }
+
+            if (x2->flags & 0x1) {
+                g_cpu_topology.enabled_count++;
+                if (g_cpu_id_list_enabled.count < ACPI_MAX_CPU_IDS) {
+                    g_cpu_id_list_enabled.ids[g_cpu_id_list_enabled.count++] = x2->x2apic_id;
+                }
+            } else {
+                g_cpu_topology.disabled_count++;
+            }
+        }
+
+        ptr += hdr->length;
+    }
+
+    if (g_cpu_topology.total_count == 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int acpi_get_cpu_topology(acpi_cpu_topology_t* topology) {
+    if (!topology) {
+        return -1;
+    }
+    if (g_cpu_topology.total_count == 0) {
+        return -1;
+    }
+    *topology = g_cpu_topology;
+    return 0;
+}
+
 // ACPI state structure
 static acpi_state_t acpi_state = {
     .initialized = false,
@@ -290,8 +426,16 @@ int acpi_init(void) {
             if (validate_checksum(header, header->length)) {
                 serial_puts("ACPI: Found FADT\n");
                 fadt = (fadt_t*)header;
-                break;
             }
+        } else if (memcmp(header->signature, MADT_SIGNATURE, 4) == 0) {
+            if (validate_checksum(header, header->length) && header->length >= sizeof(madt_t)) {
+                g_madt = (const madt_t*)header;
+                serial_puts("ACPI: Found MADT\n");
+            }
+        }
+
+        if (fadt && g_madt) {
+            break;
         }
     }
     
@@ -299,6 +443,9 @@ int acpi_init(void) {
         serial_puts("ACPI: FADT not found or inaccessible, using fallback\n");
         acpi_state.initialized = true;
         acpi_state.enabled = true;
+        if (g_madt && acpi_scan_madt_cpu_topology() == 0) {
+            serial_puts("ACPI: MADT CPU entries discovered without FADT\n");
+        }
         return 0;
     }
     acpi_state.fadt = fadt;
@@ -346,6 +493,17 @@ int acpi_init(void) {
     }
     
     acpi_state.initialized = true;
+
+    if (g_madt && acpi_scan_madt_cpu_topology() == 0) {
+        serial_puts("ACPI: CPU entries (enabled/total): ");
+        itoa(g_cpu_topology.enabled_count, buf, 10);
+        serial_puts(buf);
+        serial_puts("/");
+        itoa(g_cpu_topology.total_count, buf, 10);
+        serial_puts(buf);
+        serial_puts("\n");
+    }
+
     serial_puts("ACPI: Initialized successfully\n");
     
     return 0;

@@ -161,6 +161,21 @@ typedef struct {
     const rsdt_t* rsdt;          // Pointer to RSDT
 } acpi_state_t;
 
+typedef struct {
+    uint32_t total_count;
+    uint32_t enabled_count;
+    uint32_t disabled_count;
+    uint8_t bsp_lapic_id;
+    uint32_t lapic_address;
+} acpi_cpu_topology_t;
+
+#define ACPI_MAX_CPU_IDS 256
+
+typedef struct {
+    uint32_t count;
+    uint32_t ids[ACPI_MAX_CPU_IDS];
+} acpi_cpu_id_list_t;
+
 // Initialize ACPI subsystem
 // Returns: 0 on success, negative on error
 int acpi_init(void);
@@ -182,6 +197,14 @@ uint8_t acpi_get_revision(void);
 
 // Get ACPI state information (for debugging)
 const acpi_state_t* acpi_get_state(void);
+
+// Discover CPU topology from MADT/APIC table.
+// Returns 0 on success, negative when MADT is unavailable.
+int acpi_get_cpu_topology(acpi_cpu_topology_t* topology);
+
+// Retrieve discovered Local APIC IDs (from MADT processor entries).
+// Returns 0 on success, negative if MADT CPU entries are unavailable.
+int acpi_get_cpu_id_list(acpi_cpu_id_list_t* list, bool enabled_only);
 
 // Parse \_S5 object from DSDT to get sleep type values
 // Returns: 0 on success, -1 on failure

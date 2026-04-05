@@ -71,6 +71,7 @@
 #include <abl_boot.h>  // For ABL boot protocol
 #include <bug_report.h> // For bug tracking, crash reports, and rollback recovery
 #include <bgtask.h>    // For asynchronous background tasks
+#include <cpu.h>       // For CPU topology/model/feature detection
 
 // Simple kernel print function (prints to VGA for now)
 // Ensure vga_puts is available and initialized before kprint is used extensively.
@@ -291,6 +292,10 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     } else {
         serial_puts("ACPI init failed (may be unavailable), using fallback methods\n");
     }
+
+    serial_puts("Detecting CPU topology and capabilities...\n");
+    cpu_detect_topology();
+    cpu_log_summary();
     
     // Initialize networking subsystem (v0.8.0)
     serial_puts("Initializing networking subsystem...\n");
