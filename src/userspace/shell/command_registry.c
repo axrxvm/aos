@@ -42,6 +42,7 @@ extern void cmd_module_apm_register(void);
 extern void cmd_module_graphics_register(void);  
 extern void cmd_module_picviewer_register(void);
 extern void cmd_module_cpu_register(void);
+extern void cmd_module_upload_register(void);
 
 // Module VM command execution (from kmodule_v2.c)
 extern int execute_module_vm_command(const char* cmd_name, const char* args);
@@ -111,6 +112,7 @@ void init_commands(void) {
     cmd_module_graphics_register();  // v0.8.8 - Enhanced VGA driver
     cmd_module_picviewer_register();  // v0.9.0 - BMP picture viewer
     cmd_module_cpu_register();  // v0.9.x - CPU topology/model detection
+    cmd_module_upload_register();  // v0.9.x - Upload to tempdb service
     
     char buf[12];
     serial_puts("Command system initialized with ");
