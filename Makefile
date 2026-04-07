@@ -1,6 +1,6 @@
 # ==== Architecture Selection ====
 # Default architecture (can be overridden: make ARCH=i386)
-ARCH ?= i386
+ARCH ?= x86_64
 ALL_ISO_ARCHES = i386 x86_64
 ARCH_EXPLICIT := $(filter command line environment,$(origin ARCH))
 

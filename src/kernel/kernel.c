@@ -241,8 +241,17 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
         serial_puts("Using fallback memory detection\n");
     }
 
-    // Always initialize PMM (with fallback if needed)
-    init_pmm(total_memory_kb * 1024); // init_pmm expects total memory in bytes.
+    // Prefer multiboot memory-map aware PMM initialization when available.
+    if (multiboot_info &&
+        (multiboot_info->flags & MULTIBOOT_INFO_MEM_MAP) &&
+        multiboot_info->mmap_addr != 0 &&
+        multiboot_info->mmap_length != 0) {
+        init_pmm_advanced(total_memory_kb * 1024,
+                          (void *)(uintptr_t)multiboot_info->mmap_addr,
+                          multiboot_info->mmap_length);
+    } else {
+        init_pmm(total_memory_kb * 1024); // init_pmm expects total memory in bytes.
+    }
     // Reserve the full loaded kernel image (code/data/bss/boot tables) so PMM
     // does not hand out frames that back active kernel state.
     pmm_reserve_region((uint32_t)(uintptr_t)&__kernel_start, (uint32_t)(uintptr_t)&__kernel_end);

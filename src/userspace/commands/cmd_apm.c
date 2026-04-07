@@ -27,6 +27,48 @@
 // Parse args string into argc/argv (max 8 args)
 #define MAX_APM_ARGS 8
 
+static void apm_print_banner(void) {
+    vga_puts("\n+------------------------------------------+\n");
+    vga_puts("|              aOS Package Manager        |\n");
+    vga_puts("+------------------------------------------+\n");
+}
+
+static void apm_print_main_help(void) {
+    apm_print_banner();
+    vga_puts("Usage: apm <command> [options]\n\n");
+    vga_puts("Core:\n");
+    vga_puts("  update                           Refresh repository index\n\n");
+    vga_puts("Kernel modules:\n");
+    vga_puts("  kmodule list                     List available modules\n");
+    vga_puts("  kmodule list --installed         List installed modules\n");
+    vga_puts("  kmodule info <name>              Show module details\n");
+    vga_puts("  kmodule install|i <name>         Install module\n");
+    vga_puts("  kmodule load|l <name> [--auto]   Load module (optional autoload)\n");
+    vga_puts("  kmodule unload|x <name>          Unload module\n");
+    vga_puts("  kmodule remove|u|delete|d <name> Remove installed module\n\n");
+    vga_puts("Autoload:\n");
+    vga_puts("  kmodule autoload list\n");
+    vga_puts("  kmodule autoload enable <name>\n");
+    vga_puts("  kmodule autoload disable <name>\n");
+    vga_puts("  kmodule autoload load\n");
+}
+
+static void apm_print_kmodule_help(void) {
+    apm_print_banner();
+    vga_puts("Usage: apm kmodule <subcommand> [options]\n\n");
+    vga_puts("Subcommands:\n");
+    vga_puts("  list [--installed]               List modules\n");
+    vga_puts("  info <name>                      Show module details\n");
+    vga_puts("  install|i <name>                 Install module\n");
+    vga_puts("  load|l <name> [--auto]           Load module\n");
+    vga_puts("  unload|x <name>                  Unload module\n");
+    vga_puts("  remove|u|delete|d <name>         Remove module\n");
+    vga_puts("  autoload list                    List startup autoload entries\n");
+    vga_puts("  autoload enable <name>           Enable startup autoload\n");
+    vga_puts("  autoload disable <name>          Disable startup autoload\n");
+    vga_puts("  autoload load                    Load startup modules now\n");
+}
+
 static int parse_args(const char* args, char* argv[], char* buffer, size_t bufsize) {
     if (!args || !argv || !buffer) return 0;
     
@@ -69,22 +111,7 @@ static void cmd_apm(const char* args) {
     //serial_puts("\n");
     
     if (argc < 1) {
-        vga_puts("Usage: apm <command> [options]\n");
-        vga_puts("\nCommands:\n");
-        vga_puts("  update                     - Update repository list\n");
-        vga_puts("  kmodule list               - List available modules\n");
-        vga_puts("  kmodule list --installed   - List installed modules\n");
-        vga_puts("  kmodule info <name>        - Show module information\n");
-        vga_puts("  kmodule install <name>     - Install a module\n");
-        vga_puts("  kmodule i <name>           - Alias for install\n");
-        vga_puts("  kmodule load|l <name> [--auto]  - Load installed module\n");
-        vga_puts("  kmodule unload|x <name>    - Unload loaded module\n");
-        vga_puts("  kmodule remove|u <name>    - Remove installed module\n");
-        vga_puts("  kmodule delete|d <name>    - Alias for remove\n");
-        vga_puts("  kmodule autoload list      - List startup autoload modules\n");
-        vga_puts("  kmodule autoload enable <name>  - Enable startup autoload\n");
-        vga_puts("  kmodule autoload disable <name> - Disable startup autoload\n");
-        vga_puts("  kmodule autoload load      - Load startup modules now\n");
+        apm_print_main_help();
         return;
     }
 
@@ -103,18 +130,7 @@ static void cmd_apm(const char* args) {
     // Handle 'apm kmodule ...'
     if (strcmp(cmd, "kmodule") == 0) {
         if (argc < 2) {
-            vga_puts("Usage: apm kmodule <subcommand> [options]\n");
-            vga_puts("\nSubcommands:\n");
-            vga_puts("  list [--installed]        - List modules\n");
-            vga_puts("  info <name>               - Show module information\n");
-            vga_puts("  install|i <name>          - Install a module\n");
-            vga_puts("  load|l <name> [--auto]    - Load installed module\n");
-            vga_puts("  unload|x <name>           - Unload loaded module\n");
-            vga_puts("  remove|u|delete|d <name>  - Remove installed module\n");
-            vga_puts("  autoload list             - List startup autoload modules\n");
-            vga_puts("  autoload enable <name>    - Enable startup autoload\n");
-            vga_puts("  autoload disable <name>   - Disable startup autoload\n");
-            vga_puts("  autoload load             - Load startup modules now\n");
+            apm_print_kmodule_help();
             return;
         }
 

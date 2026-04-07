@@ -15,6 +15,7 @@
 #include <pmm.h>
 #include <stdlib.h> // For itoa
 #include <string.h>
+#include <multiboot.h>
 
 /*
  * Physical Memory Manager (PMM)
@@ -36,6 +37,7 @@
 
 // Frame bitmap and tracking
 static uint32_t frame_bitmap[MAX_FRAMES / 32];
+static uint32_t frame_bitmap_words = 0;
 static uint32_t total_frames = 0;
 static uint32_t used_frames = 0;
 
@@ -57,10 +59,66 @@ static uint32_t alloc_count = 0;
 static uint32_t free_count = 0;
 static uint32_t failed_alloc_count = 0;
 
+static inline void set_frame(uint32_t frame_index);
+static inline void clear_frame(uint32_t frame_index);
+static inline uint8_t test_frame(uint32_t frame_index);
+
+static uint32_t min_u32(uint32_t a, uint32_t b) {
+    return (a < b) ? a : b;
+}
+
+static uint32_t clamp_frame_floor(uint64_t addr) {
+    uint64_t frame = addr / PAGE_SIZE;
+    if (frame >= total_frames) {
+        return total_frames;
+    }
+    return (uint32_t)frame;
+}
+
+static uint32_t clamp_frame_ceil(uint64_t addr) {
+    uint64_t frame = (addr + (PAGE_SIZE - 1ULL)) / PAGE_SIZE;
+    if (frame >= total_frames) {
+        return total_frames;
+    }
+    return (uint32_t)frame;
+}
+
+static void mark_all_frames_allocated(void) {
+    for (uint32_t i = 0; i < frame_bitmap_words; i++) {
+        frame_bitmap[i] = 0xFFFFFFFFU;
+    }
+
+    if (frame_bitmap_words > 0) {
+        uint32_t rem = total_frames % 32;
+        if (rem != 0) {
+            frame_bitmap[frame_bitmap_words - 1] = (1U << rem) - 1U;
+        }
+    }
+    used_frames = total_frames;
+}
+
+static void mark_frame_range(uint32_t start_frame, uint32_t end_frame, int allocated) {
+    if (start_frame >= end_frame || start_frame >= total_frames) {
+        return;
+    }
+
+    if (end_frame > total_frames) {
+        end_frame = total_frames;
+    }
+
+    for (uint32_t frame = start_frame; frame < end_frame; frame++) {
+        if (allocated) {
+            set_frame(frame);
+        } else {
+            clear_frame(frame);
+        }
+    }
+}
+
 // Internal helper functions
 static inline void set_frame(uint32_t frame_index) {
     /* Mark frame allocated in bitmap and account only on state transition. */
-    if (frame_index >= MAX_FRAMES) {
+    if (frame_index >= total_frames || (frame_index / 32) >= frame_bitmap_words) {
         serial_puts("CRITICAL: set_frame - frame_index out of bounds\n");
         return;
     }
@@ -77,7 +135,7 @@ static inline void set_frame(uint32_t frame_index) {
 
 static inline void clear_frame(uint32_t frame_index) {
     /* Mark frame free in bitmap and account only on state transition. */
-    if (frame_index >= MAX_FRAMES) {
+    if (frame_index >= total_frames || (frame_index / 32) >= frame_bitmap_words) {
         serial_puts("CRITICAL: clear_frame - frame_index out of bounds\n");
         return;
     }
@@ -93,7 +151,7 @@ static inline void clear_frame(uint32_t frame_index) {
 }
 
 static inline uint8_t test_frame(uint32_t frame_index) {
-    if (frame_index >= MAX_FRAMES) {
+    if (frame_index >= total_frames || (frame_index / 32) >= frame_bitmap_words) {
         return 1; // Return as allocated to prevent allocation
     }
     uint32_t index = frame_index / 32;
@@ -165,7 +223,7 @@ static void init_zones(uint32_t mem_size) {
     zones[PMM_ZONE_DMA].end_frame = (total < DMA_ZONE_END) ? total : DMA_ZONE_END;
     zones[PMM_ZONE_DMA].total_frames = zones[PMM_ZONE_DMA].end_frame - zones[PMM_ZONE_DMA].start_frame;
     zones[PMM_ZONE_DMA].used_frames = 0;
-    zones[PMM_ZONE_DMA].reserved_frames = KERNEL_RESERVED;
+    zones[PMM_ZONE_DMA].reserved_frames = min_u32(KERNEL_RESERVED, zones[PMM_ZONE_DMA].total_frames);
     
     // Normal Zone: 16MB-896MB
     if (total > DMA_ZONE_END) {
@@ -210,12 +268,10 @@ void init_pmm(uint32_t mem_size) {
     }
     
     total_frames = mem_size / PAGE_SIZE;
-    
-    // Validate total_frames doesn't exceed MAX_FRAMES
-    if (total_frames > MAX_FRAMES) {
-        serial_puts("WARNING: Memory size exceeds MAX_FRAMES, capping\n");
-        total_frames = MAX_FRAMES;
+    if (total_frames == 0) {
+        total_frames = 1;
     }
+    frame_bitmap_words = (total_frames + 31) / 32;
     
     char buf[16];
     serial_puts("PMM: Total memory size: ");
@@ -227,7 +283,7 @@ void init_pmm(uint32_t mem_size) {
     serial_puts(" frames)\n");
 
     // Clear all frames (set all bits to 0 = free)
-    for (uint32_t i = 0; i < MAX_FRAMES / 32; i++) {
+    for (uint32_t i = 0; i < frame_bitmap_words; i++) {
         frame_bitmap[i] = 0;
     }
     
@@ -239,9 +295,13 @@ void init_pmm(uint32_t mem_size) {
     alloc_count = 0;
     free_count = 0;
     failed_alloc_count = 0;
+    frame_stack_top = -1;
+    region_list = NULL;
+    region_pool_index = 0;
     
     // Reserve kernel frames (first 2MB)
-    for (uint32_t i = 0; i < KERNEL_RESERVED; i++) {
+    uint32_t reserved_frames = min_u32(KERNEL_RESERVED, total_frames);
+    for (uint32_t i = 0; i < reserved_frames; i++) {
         set_frame(i);
     }
 
@@ -249,14 +309,76 @@ void init_pmm(uint32_t mem_size) {
 }
 
 void init_pmm_advanced(uint32_t mem_size, void *mmap_addr, uint32_t mmap_length) {
-    (void)mmap_addr;
-    (void)mmap_length;
     // First do basic initialization
     init_pmm(mem_size);
-    
-    // Then process memory map if provided
-    // This would parse multiboot memory map to mark unusable regions
-    // TODO: Implement multiboot memory map parsing
+
+    if (!mmap_addr || mmap_length < sizeof(uint32_t)) {
+        serial_puts("PMM: No valid memory map supplied, using size-only initialization\n");
+        serial_puts("PMM: Advanced initialization complete\n");
+        return;
+    }
+
+    uintptr_t map_start = (uintptr_t)mmap_addr;
+    uintptr_t map_end = map_start + mmap_length;
+    if (map_end < map_start) {
+        serial_puts("PMM: Invalid memory map bounds, using size-only initialization\n");
+        serial_puts("PMM: Advanced initialization complete\n");
+        return;
+    }
+
+    // Start conservative: all frames reserved, then release only usable ranges.
+    mark_all_frames_allocated();
+
+    uint8_t *cursor = (uint8_t *)map_start;
+    uint8_t *end = (uint8_t *)map_end;
+    uint32_t parsed_entries = 0;
+    uint32_t available_entries = 0;
+
+    while (cursor + sizeof(uint32_t) <= end) {
+        multiboot_memory_map_t *entry = (multiboot_memory_map_t *)cursor;
+        uint32_t entry_span = entry->size + sizeof(uint32_t);
+
+        if (entry_span < sizeof(multiboot_memory_map_t) || cursor + entry_span > end) {
+            break;
+        }
+
+        uint64_t start = entry->addr;
+        uint64_t entry_end = entry->addr + entry->len;
+        if (entry_end > start) {
+            uint32_t start_frame = clamp_frame_floor(start);
+            uint32_t end_frame = clamp_frame_ceil(entry_end);
+
+            if (entry->type == 1) {
+                mark_frame_range(start_frame, end_frame, 0);
+                available_entries++;
+            } else {
+                mark_frame_range(start_frame, end_frame, 1);
+            }
+
+            if (region_pool_index < 32) {
+                uint32_t reg_start = (start > UINT32_MAX) ? UINT32_MAX : (uint32_t)start;
+                uint32_t reg_end = (entry_end > UINT32_MAX) ? UINT32_MAX : (uint32_t)entry_end;
+                if (reg_end > reg_start) {
+                    pmm_add_region(reg_start, reg_end, entry->type);
+                }
+            }
+        }
+
+        parsed_entries++;
+        cursor += entry_span;
+    }
+
+    // Keep early kernel memory permanently reserved regardless of map data.
+    mark_frame_range(0, min_u32(KERNEL_RESERVED, total_frames), 1);
+
+    char buf[16];
+    serial_puts("PMM: Parsed memory-map entries: ");
+    itoa(parsed_entries, buf, 10);
+    serial_puts(buf);
+    serial_puts(" (available regions: ");
+    itoa(available_entries, buf, 10);
+    serial_puts(buf);
+    serial_puts(")\n");
     serial_puts("PMM: Advanced initialization complete\n");
 }
 
@@ -362,7 +484,7 @@ void free_page(void* page) {
     uint32_t frame = (uint32_t)((uintptr_t)page / PAGE_SIZE);
     
     // Validate frame is within bounds
-    if (frame >= total_frames || frame >= MAX_FRAMES) {
+    if (frame >= total_frames) {
         serial_puts("ERROR: free_page - frame out of bounds: 0x");
         char buf[16];
         itoa(frame, buf, 16);
@@ -572,11 +694,9 @@ int pmm_validate_integrity(void) {
     
     // Check that used_frames count matches bitmap
     uint32_t counted_used = 0;
-    for (uint32_t i = 0; i < (total_frames + 31) / 32; i++) {
-        uint32_t word = frame_bitmap[i];
-        while (word) {
-            counted_used += word & 1;
-            word >>= 1;
+    for (uint32_t frame = 0; frame < total_frames; frame++) {
+        if (test_frame(frame)) {
+            counted_used++;
         }
     }
     

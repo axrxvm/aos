@@ -35,6 +35,30 @@ static bool g_apm_initialized = false;
 #define APM_V1_MAGIC 0x004D4B41
 #define APM_AUTOLOAD_BACKUP_FILE "/sys/apm/kmodule.autoload.bak"
 
+static void apm_ui_header(const char* title) {
+    vga_puts("\n+==========================================+\n");
+    vga_puts("| ");
+    vga_puts(title ? title : "APM");
+    vga_puts("\n");
+    vga_puts("+==========================================+\n");
+}
+
+static void apm_ui_status(const char* tag, const char* msg) {
+    vga_puts("[");
+    vga_puts(tag ? tag : "INFO");
+    vga_puts("] ");
+    vga_puts(msg ? msg : "");
+    vga_puts("\n");
+}
+
+static void apm_ui_kv(const char* key, const char* value) {
+    vga_puts("  ");
+    vga_puts(key ? key : "");
+    vga_puts(": ");
+    vga_puts(value ? value : "");
+    vga_puts("\n");
+}
+
 static int apm_string_has_suffix(const char* str, const char* suffix) {
     if (!str || !suffix) return 0;
     size_t str_len = strlen(str);
@@ -656,20 +680,21 @@ int apm_download_list(apm_repository_t* repo) {
     char url[256];
     snprintf(url, sizeof(url), "%s/kmodule/list.json", APM_REPO_BASE_URL);
     
-    vga_puts("[APM] Downloading repository list...\n");
+    apm_ui_header("APM Repository Sync");
+    apm_ui_status("INFO", "Downloading repository index...");
     serial_puts("[APM] Downloading from: ");
     serial_puts(url);
     serial_puts("\n");
     
     http_response_t* response = http_response_create();
     if (!response) {
-        vga_puts("[APM] Error: Failed to create HTTP response\n");
+        apm_ui_status("ERROR", "Failed to initialize HTTP response object");
         return -1;
     }
     
     int result = http_get(url, response);
     if (result < 0 || response->status_code != HTTP_STATUS_OK) {
-        vga_puts("[APM] Error: Failed to download list (HTTP ");
+        vga_puts("[ERROR] Failed to download repository list (HTTP ");
         char code_str[16];
         itoa(response->status_code, code_str, 10);
         vga_puts(code_str);
@@ -679,14 +704,14 @@ int apm_download_list(apm_repository_t* repo) {
     }
     
     if (!response->body || response->body_len == 0) {
-        vga_puts("[APM] Error: Empty response\n");
+        apm_ui_status("ERROR", "Repository response is empty");
         http_response_free(response);
         return -1;
     }
     
     // Sanity check - body length should be reasonable
     if (response->body_len > 1024 * 1024) {  // 1MB max
-        vga_puts("[APM] Error: Response too large\n");
+        apm_ui_status("ERROR", "Repository response too large");
         http_response_free(response);
         return -1;
     }
@@ -694,7 +719,7 @@ int apm_download_list(apm_repository_t* repo) {
     // Parse the JSON
     char* json_data = (char*)kmalloc(response->body_len + 1);
     if (!json_data) {
-        vga_puts("[APM] Error: Out of memory\n");
+        apm_ui_status("ERROR", "Out of memory while parsing repository");
         http_response_free(response);
         return -1;
     }
@@ -711,12 +736,16 @@ int apm_download_list(apm_repository_t* repo) {
         if (fd >= 0) {
             vfs_write(fd, response->body, response->body_len);
             vfs_close(fd);
-            vga_puts("[APM] Repository list updated successfully\n");
+            char count_str[16];
+            itoa(repo->module_count, count_str, 10);
+            apm_ui_status("OK", "Repository list updated successfully");
+            apm_ui_kv("Modules", count_str);
+            apm_ui_kv("Source", APM_REPO_BASE_URL);
         } else {
-            vga_puts("[APM] Warning: Could not save list to disk\n");
+            apm_ui_status("WARN", "Index parsed but could not be cached to disk");
         }
     } else {
-        vga_puts("[APM] Error: Failed to parse repository list\n");
+        apm_ui_status("ERROR", "Failed to parse repository list");
     }
     
     kfree(json_data);
@@ -734,7 +763,7 @@ int apm_update(void) {
     // Use dynamically allocated repository to avoid large stack allocation
     apm_repository_t* repo = (apm_repository_t*)kmalloc(sizeof(apm_repository_t));
     if (!repo) {
-        vga_puts("[APM] Error: Out of memory\n");
+        apm_ui_status("ERROR", "Out of memory while allocating repository state");
         return -1;
     }
     
@@ -842,12 +871,16 @@ int apm_download_module(const char* folder, const char* module, uint8_t** data_o
 
 int apm_list_available(void) {
     if (g_apm_repo.module_count == 0) {
-        vga_puts("[APM] No repository list found. Run 'apm update' first.\n");
+        apm_ui_status("WARN", "No repository list found. Run 'apm update' first.");
         return -1;
     }
-    
-    vga_puts("\nAvailable Kernel Modules:\n");
-    vga_puts("==========================\n");
+
+    apm_ui_header("Available Kernel Modules");
+
+    char total_str[16];
+    itoa(g_apm_repo.module_count, total_str, 10);
+    apm_ui_kv("Total entries", total_str);
+    vga_puts("\n");
     
     for (int i = 0; i < g_apm_repo.module_count; i++) {
         if (g_apm_repo.modules[i].valid) {
@@ -856,18 +889,17 @@ int apm_list_available(void) {
             vga_puts("\n");
         }
     }
-    
-    vga_puts("\nUse 'apm kmodule info <name>' for details.\n");
+
+    vga_puts("\nTip: apm kmodule info <name> for details.\n");
     return 0;
 }
 
 int apm_list_installed(void) {
-    vga_puts("\nInstalled Kernel Modules:\n");
-    vga_puts("=========================\n");
+    apm_ui_header("Installed Kernel Modules");
     
     int fd = vfs_open(APM_MODULE_DIR, O_RDONLY | O_DIRECTORY);
     if (fd < 0) {
-        vga_puts("  (none)\n");
+        vga_puts("  (none installed)\n");
         return 0;
     }
     
@@ -886,7 +918,12 @@ int apm_list_installed(void) {
     vfs_close(fd);
     
     if (count == 0) {
-        vga_puts("  (none)\n");
+        vga_puts("  (none installed)\n");
+    } else {
+        char count_str[16];
+        itoa(count, count_str, 10);
+        vga_puts("\n");
+        apm_ui_kv("Installed count", count_str);
     }
     
     return 0;
@@ -894,68 +931,46 @@ int apm_list_installed(void) {
 
 int apm_show_info(const char* module_name) {
     if (g_apm_repo.module_count == 0) {
-        vga_puts("[APM] No repository list found. Run 'apm update' first.\n");
+        apm_ui_status("WARN", "No repository list found. Run 'apm update' first.");
         return -1;
     }
     
     apm_module_entry_t* entry = apm_find_module(module_name);
     if (!entry) {
-        vga_puts("[APM] Error: Module '");
+        vga_puts("[ERROR] Module '");
         vga_puts(module_name);
         vga_puts("' not found in repository\n");
         return -1;
     }
-    
-    vga_puts("\nModule Information:\n");
-    vga_puts("===================\n");
-    vga_puts("Name:        ");
-    vga_puts(entry->metadata.name);
-    vga_puts("\n");
-    
-    vga_puts("Version:     ");
-    vga_puts(entry->metadata.version);
-    vga_puts("\n");
-    
-    vga_puts("Author:      ");
-    vga_puts(entry->metadata.author);
-    vga_puts("\n");
-    
-    vga_puts("License:     ");
-    vga_puts(entry->metadata.license);
-    vga_puts("\n");
-    
-    vga_puts("Description: ");
-    vga_puts(entry->metadata.description);
-    vga_puts("\n");
-    
-    vga_puts("\nFile:        ");
-    vga_puts(entry->module);
-    vga_puts("\n");
-    
-    vga_puts("SHA256:      ");
-    vga_puts(entry->sha256);
-    vga_puts("\n");
+
+    apm_ui_header("Module Details");
+    apm_ui_kv("Name", entry->metadata.name);
+    apm_ui_kv("Version", entry->metadata.version);
+    apm_ui_kv("Author", entry->metadata.author);
+    apm_ui_kv("License", entry->metadata.license);
+    apm_ui_kv("Description", entry->metadata.description);
+    apm_ui_kv("File", entry->module);
+    apm_ui_kv("SHA256", entry->sha256);
     
     return 0;
 }
 
 int apm_install_module(const char* module_name) {
     if (g_apm_repo.module_count == 0) {
-        vga_puts("[APM] No repository list found. Run 'apm update' first.\n");
+        apm_ui_status("WARN", "No repository list found. Run 'apm update' first.");
         return -1;
     }
     
     apm_module_entry_t* entry = apm_find_module(module_name);
     if (!entry) {
-        vga_puts("[APM] Error: Module '");
+        vga_puts("[ERROR] Module '");
         vga_puts(module_name);
         vga_puts("' not found in repository\n");
         return -1;
     }
-    
-    vga_puts("[APM] Installing module: ");
-    vga_puts(module_name);
-    vga_puts("\n");
+
+    apm_ui_header("Module Installation");
+    apm_ui_kv("Target", module_name);
     
     // Download module
     uint8_t* module_data = NULL;
@@ -965,24 +980,24 @@ int apm_install_module(const char* module_name) {
         return -1;
     }
     
-    vga_puts("[APM] Downloaded ");
+    vga_puts("[OK] Downloaded ");
     char size_str[32];
     itoa(module_size, size_str, 10);
     vga_puts(size_str);
     vga_puts(" bytes\n");
     
     // Verify SHA256
-    vga_puts("[APM] Verifying integrity...\n");
+    apm_ui_status("INFO", "Verifying SHA256 integrity...");
     if (!apm_verify_sha256(module_data, module_size, entry->sha256)) {
-        vga_puts("[APM] Error: SHA256 verification failed!\n");
-        vga_puts("[APM] Expected: ");
+        apm_ui_status("ERROR", "SHA256 verification failed");
+        vga_puts("  Expected: ");
         vga_puts(entry->sha256);
         vga_puts("\n");
         kfree(module_data);
         return -1;
     }
-    
-    vga_puts("[APM] Verification passed\n");
+
+    apm_ui_status("OK", "Verification passed");
     
     // Save to disk
     char module_path[256];
@@ -990,13 +1005,13 @@ int apm_install_module(const char* module_name) {
     
     int fd = vfs_open(module_path, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
-        vga_puts("[APM] Error: Failed to create module file\n");
+        apm_ui_status("ERROR", "Failed to create module file");
         kfree(module_data);
         return -1;
     }
     
     if (vfs_write(fd, module_data, module_size) != (int)module_size) {
-        vga_puts("[APM] Error: Failed to write module file\n");
+        apm_ui_status("ERROR", "Failed to write module file");
         vfs_close(fd);
         kfree(module_data);
         return -1;
@@ -1005,12 +1020,11 @@ int apm_install_module(const char* module_name) {
     vfs_close(fd);
     kfree(module_data);
     
-    vga_puts("[APM] Module installed successfully to: ");
-    vga_puts(module_path);
+    apm_ui_status("OK", "Module installed successfully");
+    apm_ui_kv("Path", module_path);
+    vga_puts("  Next: apm kmodule load ");
+    vga_puts(module_name);
     vga_puts("\n");
-    vga_puts("[APM] Use 'modload ");
-    vga_puts(module_path);
-    vga_puts("' to load it\n");
     
     return 0;
 }
@@ -1022,14 +1036,14 @@ static int apm_load_module_internal(const char* module_name, bool to_vga) {
     module_id[0] = '\0';
 
     if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
-        if (to_vga) vga_puts("[APM] Error: Invalid module name/path\n");
+        if (to_vga) vga_puts("[ERROR] Invalid module name/path\n");
         else serial_puts("[APM] Error: Invalid module name/path\n");
         return -1;
     }
 
     if (apm_get_module_identity(module_path, module_id, sizeof(module_id), &is_v2) < 0) {
         if (to_vga) {
-            vga_puts("[APM] Error: Invalid module file: ");
+            vga_puts("[ERROR] Invalid module file: ");
             vga_puts(module_path);
             vga_puts("\n");
         } else {
@@ -1046,7 +1060,7 @@ static int apm_load_module_internal(const char* module_name, bool to_vga) {
         size_t size = 0;
 
         if (apm_read_module_blob(module_path, &data, &size) < 0) {
-            if (to_vga) vga_puts("[APM] Error: Failed to read module file\n");
+            if (to_vga) vga_puts("[ERROR] Failed to read module file\n");
             else serial_puts("[APM] Error: Failed to read module file\n");
             return -1;
         }
@@ -1059,7 +1073,7 @@ static int apm_load_module_internal(const char* module_name, bool to_vga) {
 
     if (result == 0) {
         if (to_vga) {
-            vga_puts("[APM] Loaded module: ");
+            vga_puts("[OK] Loaded module: ");
             if (module_id[0] != '\0') {
                 vga_puts(module_id);
             } else {
@@ -1076,7 +1090,7 @@ static int apm_load_module_internal(const char* module_name, bool to_vga) {
             serial_puts("\n");
         }
     } else {
-        if (to_vga) vga_puts("[APM] Error: Failed to load module\n");
+        if (to_vga) vga_puts("[ERROR] Failed to load module\n");
         else serial_puts("[APM] Error: Failed to load module\n");
     }
 
@@ -1089,13 +1103,13 @@ int apm_load_module(const char* module_name) {
 
 int apm_unload_module(const char* module_name) {
     if (!module_name || module_name[0] == '\0') {
-        vga_puts("[APM] Error: Module name required\n");
+        vga_puts("[ERROR] Module name required\n");
         return -1;
     }
 
     char normalized_name[APM_MAX_NAME_LEN];
     if (apm_normalize_module_name(module_name, normalized_name, sizeof(normalized_name)) < 0) {
-        vga_puts("[APM] Error: Invalid module name\n");
+        vga_puts("[ERROR] Invalid module name\n");
         return -1;
     }
 
@@ -1146,14 +1160,14 @@ int apm_unload_module(const char* module_name) {
 
     for (int i = 0; i < candidate_count; i++) {
         if (kmodule_unload_v2(candidates[i]) == 0 || kmodule_unload(candidates[i]) == 0) {
-            vga_puts("[APM] Unloaded module: ");
+            vga_puts("[OK] Unloaded module: ");
             vga_puts(candidates[i]);
             vga_puts("\n");
             return 0;
         }
     }
 
-    vga_puts("[APM] Error: Module is not loaded: ");
+    vga_puts("[ERROR] Module is not loaded: ");
     vga_puts(module_name);
     vga_puts("\n");
     return -1;
@@ -1172,12 +1186,12 @@ int apm_set_module_autoload(const char* module_name, bool enabled) {
     if (enabled) {
         char module_path[256];
         if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
-            vga_puts("[APM] Error: Invalid module path for autoload\n");
+            vga_puts("[ERROR] Invalid module path for autoload\n");
             return -1;
         }
         int fd_check = vfs_open(module_path, O_RDONLY);
         if (fd_check < 0) {
-            vga_puts("[APM] Error: Module is not installed: ");
+            vga_puts("[ERROR] Module is not installed: ");
             vga_puts(normalized_name);
             vga_puts("\n");
             return -1;
@@ -1188,7 +1202,7 @@ int apm_set_module_autoload(const char* module_name, bool enabled) {
     char entries[APM_MAX_MODULES][APM_MAX_NAME_LEN];
     int count = apm_read_autoload_entries(entries, APM_MAX_MODULES);
     if (count < 0) {
-        vga_puts("[APM] Error: Failed to read autoload configuration\n");
+        vga_puts("[ERROR] Failed to read autoload configuration\n");
         return -1;
     }
 
@@ -1202,13 +1216,13 @@ int apm_set_module_autoload(const char* module_name, bool enabled) {
 
     if (enabled) {
         if (found_index >= 0) {
-            vga_puts("[APM] Autoload already enabled for ");
+            vga_puts("[INFO] Autoload already enabled for ");
             vga_puts(normalized_name);
             vga_puts("\n");
             return 0;
         }
         if (count >= APM_MAX_MODULES) {
-            vga_puts("[APM] Error: Autoload list is full\n");
+            vga_puts("[ERROR] Autoload list is full\n");
             return -1;
         }
         strncpy(entries[count], normalized_name, APM_MAX_NAME_LEN - 1);
@@ -1227,11 +1241,11 @@ int apm_set_module_autoload(const char* module_name, bool enabled) {
     }
 
     if (apm_write_autoload_entries(entries, count) < 0) {
-        vga_puts("[APM] Error: Failed to update autoload configuration\n");
+        vga_puts("[ERROR] Failed to update autoload configuration\n");
         return -1;
     }
 
-    vga_puts("[APM] Autoload ");
+    vga_puts("[OK] Autoload ");
     vga_puts(enabled ? "enabled for " : "disabled for ");
     vga_puts(normalized_name);
     vga_puts("\n");
@@ -1242,14 +1256,13 @@ int apm_list_autoload_modules(void) {
     char entries[APM_MAX_MODULES][APM_MAX_NAME_LEN];
     int count = apm_read_autoload_entries(entries, APM_MAX_MODULES);
     if (count < 0) {
-        vga_puts("[APM] Error: Failed to read autoload list\n");
+        vga_puts("[ERROR] Failed to read autoload list\n");
         return -1;
     }
 
-    vga_puts("\nStartup Auto-load Modules:\n");
-    vga_puts("===========================\n");
+    apm_ui_header("Startup Auto-load Modules");
     if (count == 0) {
-        vga_puts("  (none)\n");
+        vga_puts("  (none configured)\n");
         return 0;
     }
 
@@ -1330,13 +1343,13 @@ int apm_load_startup_modules(void) {
 int apm_remove_module(const char* module_name) {
     char module_path[256];
     if (apm_build_module_path(module_name, module_path, sizeof(module_path)) < 0) {
-        vga_puts("[APM] Error: Invalid module name/path\n");
+        vga_puts("[ERROR] Invalid module name/path\n");
         return -1;
     }
 
     int fd = vfs_open(module_path, O_RDONLY);
     if (fd < 0) {
-        vga_puts("[APM] Error: Module '");
+        vga_puts("[ERROR] Module '");
         vga_puts(module_name);
         vga_puts("' is not installed\n");
         return -1;
@@ -1362,11 +1375,11 @@ int apm_remove_module(const char* module_name) {
     apm_set_module_autoload(module_name, false);
 
     if (vfs_unlink(module_path) < 0) {
-        vga_puts("[APM] Error: Failed to remove module file\n");
+        vga_puts("[ERROR] Failed to remove module file\n");
         return -1;
     }
 
-    vga_puts("[APM] Module '");
+    vga_puts("[OK] Module '");
     vga_puts(module_name);
     vga_puts("' removed successfully\n");
     return 0;

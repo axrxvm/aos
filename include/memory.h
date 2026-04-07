@@ -25,7 +25,8 @@
 #include <stddef.h>
 
 #define PAGE_SIZE 4096
-#define MAX_FRAMES (1024 * 1024 * 32 / PAGE_SIZE)
+/* Maximum frame count representable by 32-bit physical addresses. */
+#define MAX_FRAMES (((uint32_t)(UINT32_MAX / PAGE_SIZE)) + 1U)
 
 // PMM functions (declared in pmm.h, but kept for compatibility)
 void* alloc_page(void);
