@@ -20,6 +20,20 @@
 #include <serial.h>
 #include <vga.h>
 #include <net/net.h>
+#include <net/ethernet.h>
+#include <net/arp.h>
+#include <net/ipv4.h>
+#include <net/icmp.h>
+#include <net/dhcp.h>
+#include <net/socket.h>
+#include <net/tcp.h>
+#include <net/udp.h>
+#include <net/http.h>
+#include <net/dns.h>
+#include <net/tls.h>
+#include <net/nat.h>
+#include <net/loopback.h>
+#include <net/netconfig.h>
 #include <user.h>
 #include <fileperm.h>
 
@@ -51,6 +65,7 @@ extern int register_module_cmd(const char* name, uint32_t handler_offset,
 #define MAX_MODULE_DRIVERS  8
 #define MAX_MODULE_FS       4
 #define MAX_MODULE_NETIF    4
+#define MAX_MODULE_HTTP_RESP 16
 
 typedef struct {
     char name[32];
@@ -77,7 +92,50 @@ typedef struct {
     int fs_count;
     module_netif_t netifs[MAX_MODULE_NETIF];
     int netif_count;
+    http_response_t* http_responses[MAX_MODULE_HTTP_RESP];
 } vm_registry_t;
+
+static vm_registry_t* get_vm_registry(akm_vm_t* vm);
+
+static int alloc_http_response_handle(akm_vm_t* vm, http_response_t* resp) {
+    vm_registry_t* reg = get_vm_registry(vm);
+    if (!reg || !resp) return 0;
+
+    for (int i = 0; i < MAX_MODULE_HTTP_RESP; i++) {
+        if (!reg->http_responses[i]) {
+            reg->http_responses[i] = resp;
+            return i + 1; /* Handle space is 1-based; 0 means invalid */
+        }
+    }
+
+    return 0;
+}
+
+static http_response_t* get_http_response_from_arg(akm_vm_t* vm, int32_t arg) {
+    vm_registry_t* reg = get_vm_registry(vm);
+    if (reg && arg > 0 && arg <= MAX_MODULE_HTTP_RESP) {
+        http_response_t* via_handle = reg->http_responses[arg - 1];
+        if (via_handle) return via_handle;
+    }
+
+    /* Fallback for legacy direct-pointer callers. */
+    return (http_response_t*)(uintptr_t)arg;
+}
+
+static void free_http_response_handle(akm_vm_t* vm, int32_t arg) {
+    vm_registry_t* reg = get_vm_registry(vm);
+    if (reg && arg > 0 && arg <= MAX_MODULE_HTTP_RESP) {
+        int idx = arg - 1;
+        if (reg->http_responses[idx]) {
+            http_response_free(reg->http_responses[idx]);
+            reg->http_responses[idx] = 0;
+        }
+        return;
+    }
+
+    /* Fallback for legacy direct-pointer callers. */
+    http_response_free((http_response_t*)(uintptr_t)arg);
+}
 
 /* Safely get or create registry for a VM - returns NULL on failure */
 static vm_registry_t* get_vm_registry(akm_vm_t* vm) {
@@ -97,6 +155,13 @@ static vm_registry_t* get_vm_registry(akm_vm_t* vm) {
 void akm_vm_cleanup_registry(akm_vm_t* vm) {
     /* Release per-VM registry allocated through get_vm_registry(). */
     if (!vm || !vm->ctx || !vm->ctx->_private) return;
+    vm_registry_t* reg = (vm_registry_t*)vm->ctx->_private;
+    for (int i = 0; i < MAX_MODULE_HTTP_RESP; i++) {
+        if (reg->http_responses[i]) {
+            http_response_free(reg->http_responses[i]);
+            reg->http_responses[i] = 0;
+        }
+    }
     kfree(vm->ctx->_private);
     vm->ctx->_private = 0;
 }
@@ -882,6 +947,753 @@ static int dispatch_api(akm_vm_t* vm, uint8_t api_id, uint8_t argc) {
                 } else {
                     result = 0;
                 }
+            }
+            break;
+
+        /* NETWORK STACK (71-198) */
+        case AKM_API_SOCKET_CREATE:
+            result = socket_create(args[0], args[1], args[2]);
+            break;
+
+        case AKM_API_SOCKET_BIND:
+            {
+                sockaddr_in_t addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sa_family = AF_INET;
+                addr.sin_addr = (uint32_t)args[1];
+                addr.sin_port = htons((uint16_t)args[2]);
+                result = socket_bind(args[0], &addr);
+            }
+            break;
+
+        case AKM_API_SOCKET_LISTEN:
+            result = socket_listen(args[0], args[1]);
+            break;
+
+        case AKM_API_SOCKET_ACCEPT:
+            result = socket_accept(args[0], 0);
+            break;
+
+        case AKM_API_SOCKET_CONNECT:
+            {
+                sockaddr_in_t addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sa_family = AF_INET;
+                addr.sin_addr = (uint32_t)args[1];
+                addr.sin_port = htons((uint16_t)args[2]);
+                result = socket_connect(args[0], &addr);
+            }
+            break;
+
+        case AKM_API_SOCKET_SEND:
+            if (args[1] && args[2] >= 0) {
+                result = socket_send(args[0], (const uint8_t*)(uintptr_t)args[1],
+                    (uint32_t)args[2], args[3]);
+            } else {
+                result = KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_SOCKET_RECV:
+            if (args[1] && args[2] >= 0) {
+                result = socket_recv(args[0], (uint8_t*)(uintptr_t)args[1],
+                    (uint32_t)args[2], args[3]);
+            } else {
+                result = KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_SOCKET_CLOSE:
+            result = socket_close(args[0]);
+            break;
+
+        case AKM_API_DNS_RESOLVE:
+            {
+                const char* hostname = akm_vm_get_string(vm, args[0]);
+                if (!hostname) {
+                    result = KMOD_ERR_INVALID;
+                    break;
+                }
+
+                uint32_t ip_addr = 0;
+                int rc = dns_resolve(hostname, &ip_addr);
+                result = (rc == 0) ? (int32_t)ip_addr : rc;
+            }
+            break;
+
+        case AKM_API_NET_POLL:
+            net_poll();
+            result = 0;
+            break;
+
+        case AKM_API_NET_INIT:
+            net_init();
+            result = 0;
+            break;
+
+        case AKM_API_NET_IF_COUNT:
+            result = net_interface_count();
+            break;
+
+        case AKM_API_NET_IF_GET:
+            {
+                const char* ifname = akm_vm_get_string(vm, args[0]);
+                net_interface_t* iface = ifname ? net_interface_get(ifname) : 0;
+                result = iface ? (int32_t)(uintptr_t)iface : 0;
+            }
+            break;
+
+        case AKM_API_NET_IF_GET_IDX:
+            {
+                net_interface_t* iface = net_interface_get_by_index(args[0]);
+                result = iface ? (int32_t)(uintptr_t)iface : 0;
+            }
+            break;
+
+        case AKM_API_NET_IF_UP:
+            result = net_interface_up((net_interface_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_NET_IF_DOWN:
+            result = net_interface_down((net_interface_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_NET_IF_SET_IP:
+            result = net_interface_set_ip((net_interface_t*)(uintptr_t)args[0],
+                (uint32_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_NET_PKT_ALLOC:
+            {
+                net_packet_t* pkt = net_packet_alloc((uint32_t)args[0]);
+                result = pkt ? (int32_t)(uintptr_t)pkt : 0;
+            }
+            break;
+
+        case AKM_API_NET_PKT_FREE:
+            net_packet_free((net_packet_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_NET_TX_PKT:
+            result = net_transmit_packet((net_interface_t*)(uintptr_t)args[0],
+                (net_packet_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_NET_RX_PKT:
+            result = net_receive_packet((net_interface_t*)(uintptr_t)args[0],
+                (net_packet_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_IP_TO_STRING:
+            {
+                const char* ipstr = ip_to_string((uint32_t)args[0]);
+                result = ipstr ? (int32_t)(uintptr_t)ipstr : 0;
+            }
+            break;
+
+        case AKM_API_STRING_TO_IP:
+            {
+                const char* ipstr = akm_vm_get_string(vm, args[0]);
+                result = ipstr ? (int32_t)string_to_ip(ipstr) : 0;
+            }
+            break;
+
+        case AKM_API_ETH_RECEIVE:
+            result = eth_receive((net_interface_t*)(uintptr_t)args[0],
+                (net_packet_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_ETH_TRANSMIT:
+            result = eth_transmit((net_interface_t*)(uintptr_t)args[0],
+                (const mac_addr_t*)(uintptr_t)args[1], (uint16_t)args[2],
+                (const uint8_t*)(uintptr_t)args[3], (uint32_t)args[4]);
+            break;
+
+        case AKM_API_MAC_TO_STRING:
+            mac_to_string((const mac_addr_t*)(uintptr_t)args[0], (char*)(uintptr_t)args[1]);
+            result = 0;
+            break;
+
+        case AKM_API_MAC_COMPARE:
+            result = mac_compare((const mac_addr_t*)(uintptr_t)args[0],
+                (const mac_addr_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_ARP_INIT:
+            arp_init();
+            result = 0;
+            break;
+
+        case AKM_API_ARP_SEND_REQ:
+            result = arp_send_request((net_interface_t*)(uintptr_t)args[0], (uint32_t)args[1]);
+            break;
+
+        case AKM_API_ARP_SEND_REP:
+            result = arp_send_reply((net_interface_t*)(uintptr_t)args[0], (uint32_t)args[1],
+                (const mac_addr_t*)(uintptr_t)args[2]);
+            break;
+
+        case AKM_API_ARP_CACHE_LOOKUP:
+            result = arp_cache_lookup((uint32_t)args[0], (mac_addr_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_ARP_CACHE_ADD:
+            arp_cache_add((uint32_t)args[0], (const mac_addr_t*)(uintptr_t)args[1]);
+            result = 0;
+            break;
+
+        case AKM_API_ARP_CACHE_CLEAR:
+            arp_cache_clear();
+            result = 0;
+            break;
+
+        case AKM_API_ARP_CACHE_ENTRIES:
+            result = arp_cache_get_entries((arp_cache_entry_t*)(uintptr_t)args[0], args[1]);
+            break;
+
+        case AKM_API_IPV4_INIT:
+            ipv4_init();
+            result = 0;
+            break;
+
+        case AKM_API_IPV4_SEND:
+            result = ipv4_send((net_interface_t*)(uintptr_t)args[0], (uint32_t)args[1],
+                (uint8_t)args[2], (const uint8_t*)(uintptr_t)args[3], (uint32_t)args[4]);
+            break;
+
+        case AKM_API_IPV4_ROUTE:
+            result = ipv4_route((uint32_t)args[0], (net_interface_t**)(uintptr_t)args[1],
+                (uint32_t*)(uintptr_t)args[2]);
+            break;
+
+        case AKM_API_IPV4_PENDING:
+            ipv4_process_pending();
+            result = 0;
+            break;
+
+        case AKM_API_IPV4_RESOLVE_ARP:
+            result = ipv4_resolve_arp((net_interface_t*)(uintptr_t)args[0], (uint32_t)args[1],
+                (mac_addr_t*)(uintptr_t)args[2], (uint32_t)args[3]);
+            break;
+
+        case AKM_API_ICMP_INIT:
+            icmp_init();
+            result = 0;
+            break;
+
+        case AKM_API_ICMP_ECHO_REQ:
+            result = icmp_send_echo_request((uint32_t)args[0], (uint16_t)args[1],
+                (uint16_t)args[2], (const uint8_t*)(uintptr_t)args[3], (uint32_t)args[4]);
+            break;
+
+        case AKM_API_DNS_INIT:
+            dns_init();
+            result = 0;
+            break;
+
+        case AKM_API_DNS_SET_SERVER:
+            dns_set_server((uint32_t)args[0], (uint32_t)args[1]);
+            result = 0;
+            break;
+
+        case AKM_API_DNS_GET_SERVER:
+            dns_get_servers((uint32_t*)(uintptr_t)args[0], (uint32_t*)(uintptr_t)args[1]);
+            result = 0;
+            break;
+
+        case AKM_API_DNS_SET_TIMEOUT:
+            dns_set_timeout((uint32_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_DNS_SET_RETRY:
+            dns_set_retry_count((uint8_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_DNS_CACHE_CLEAR:
+            dns_cache_clear();
+            result = 0;
+            break;
+
+        case AKM_API_DNS_CACHE_LOOKUP:
+            {
+                const char* hostname = akm_vm_get_string(vm, args[0]);
+                result = hostname ? dns_cache_lookup(hostname, (uint32_t*)(uintptr_t)args[1]) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_DNS_CACHE_ADD:
+            {
+                const char* hostname = akm_vm_get_string(vm, args[0]);
+                result = hostname ? dns_cache_add(hostname, (uint32_t)args[1], (uint32_t)args[2]) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_DNS_CACHE_ENTRIES:
+            result = dns_cache_get_entries((dns_cache_entry_t*)(uintptr_t)args[0], args[1]);
+            break;
+
+        case AKM_API_DHCP_INIT:
+            dhcp_init();
+            result = 0;
+            break;
+
+        case AKM_API_DHCP_DISCOVER:
+            result = dhcp_discover((net_interface_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_DHCP_DISCOVER_TIMED:
+            result = dhcp_discover_timed((net_interface_t*)(uintptr_t)args[0],
+                (uint32_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_DHCP_CONFIG_IF:
+            result = dhcp_configure_interface((net_interface_t*)(uintptr_t)args[0],
+                (dhcp_config_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_DHCP_GET_CONFIG:
+            {
+                dhcp_config_t* cfg = dhcp_get_config();
+                result = cfg ? (int32_t)(uintptr_t)cfg : 0;
+            }
+            break;
+
+        case AKM_API_SOCKET_SENDTO:
+            {
+                sockaddr_in_t addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.sa_family = AF_INET;
+                addr.sin_addr = (uint32_t)args[4];
+                addr.sin_port = htons((uint16_t)args[5]);
+                result = socket_sendto(args[0], (const uint8_t*)(uintptr_t)args[1],
+                    (uint32_t)args[2], args[3], &addr);
+            }
+            break;
+
+        case AKM_API_SOCKET_RECVFROM:
+            {
+                sockaddr_in_t addr;
+                int r = socket_recvfrom(args[0], (uint8_t*)(uintptr_t)args[1], (uint32_t)args[2],
+                    args[3], &addr);
+                if (r >= 0) {
+                    if (args[4]) *((uint32_t*)(uintptr_t)args[4]) = addr.sin_addr;
+                    if (args[5]) *((uint16_t*)(uintptr_t)args[5]) = ntohs(addr.sin_port);
+                }
+                result = r;
+            }
+            break;
+
+        case AKM_API_TCP_INIT:
+            tcp_init();
+            result = 0;
+            break;
+
+        case AKM_API_TCP_SOCK_CREATE:
+            {
+                tcp_socket_t* sock = tcp_socket_create();
+                result = sock ? (int32_t)(uintptr_t)sock : 0;
+            }
+            break;
+
+        case AKM_API_TCP_SOCK_BIND:
+            result = tcp_socket_bind((tcp_socket_t*)(uintptr_t)args[0], (uint32_t)args[1], (uint16_t)args[2]);
+            break;
+
+        case AKM_API_TCP_SOCK_LISTEN:
+            result = tcp_socket_listen((tcp_socket_t*)(uintptr_t)args[0], args[1]);
+            break;
+
+        case AKM_API_TCP_SOCK_ACCEPT:
+            {
+                tcp_socket_t* sock = tcp_socket_accept((tcp_socket_t*)(uintptr_t)args[0]);
+                result = sock ? (int32_t)(uintptr_t)sock : 0;
+            }
+            break;
+
+        case AKM_API_TCP_SOCK_CONNECT:
+            result = tcp_socket_connect((tcp_socket_t*)(uintptr_t)args[0], (uint32_t)args[1], (uint16_t)args[2]);
+            break;
+
+        case AKM_API_TCP_SOCK_SEND:
+            result = tcp_socket_send((tcp_socket_t*)(uintptr_t)args[0],
+                (const uint8_t*)(uintptr_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_TCP_SOCK_RECV:
+            result = tcp_socket_recv((tcp_socket_t*)(uintptr_t)args[0],
+                (uint8_t*)(uintptr_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_TCP_SOCK_CLOSE:
+            tcp_socket_close((tcp_socket_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_TCP_SOCK_CONN_BLK:
+            result = tcp_socket_connect_blocking((tcp_socket_t*)(uintptr_t)args[0],
+                (uint32_t)args[1], (uint16_t)args[2], (uint32_t)args[3]);
+            break;
+
+        case AKM_API_TCP_SOCK_RECV_BLK:
+            result = tcp_socket_recv_blocking((tcp_socket_t*)(uintptr_t)args[0],
+                (uint8_t*)(uintptr_t)args[1], (uint32_t)args[2], (uint32_t)args[3]);
+            break;
+
+        case AKM_API_TCP_STATE_TO_STR:
+            {
+                const char* s = tcp_state_to_string((tcp_state_t)args[0]);
+                result = s ? (int32_t)(uintptr_t)s : 0;
+            }
+            break;
+
+        case AKM_API_UDP_INIT:
+            udp_init();
+            result = 0;
+            break;
+
+        case AKM_API_UDP_SOCK_CREATE:
+            {
+                udp_socket_t* sock = udp_socket_create();
+                result = sock ? (int32_t)(uintptr_t)sock : 0;
+            }
+            break;
+
+        case AKM_API_UDP_SOCK_BIND:
+            result = udp_socket_bind((udp_socket_t*)(uintptr_t)args[0], (uint32_t)args[1], (uint16_t)args[2]);
+            break;
+
+        case AKM_API_UDP_SOCK_CONNECT:
+            result = udp_socket_connect((udp_socket_t*)(uintptr_t)args[0], (uint32_t)args[1], (uint16_t)args[2]);
+            break;
+
+        case AKM_API_UDP_SOCK_SENDTO:
+            result = udp_socket_sendto((udp_socket_t*)(uintptr_t)args[0], (const uint8_t*)(uintptr_t)args[1],
+                (uint32_t)args[2], (uint32_t)args[3], (uint16_t)args[4]);
+            break;
+
+        case AKM_API_UDP_SOCK_RECVFROM:
+            result = udp_socket_recvfrom((udp_socket_t*)(uintptr_t)args[0], (uint8_t*)(uintptr_t)args[1],
+                (uint32_t)args[2], (uint32_t*)(uintptr_t)args[3], (uint16_t*)(uintptr_t)args[4]);
+            break;
+
+        case AKM_API_UDP_SOCK_CLOSE:
+            udp_socket_close((udp_socket_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_UDP_SEND:
+            result = udp_send((udp_socket_t*)(uintptr_t)args[0], (const uint8_t*)(uintptr_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_HTTP_INIT:
+            http_init();
+            result = 0;
+            break;
+
+        case AKM_API_HTTP_GET:
+            {
+                const char* url = akm_vm_get_string(vm, args[0]);
+                http_response_t* resp = get_http_response_from_arg(vm, args[1]);
+                result = (url && resp) ? http_get(url, resp) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_HTTP_POST:
+            {
+                const char* url = akm_vm_get_string(vm, args[0]);
+                http_response_t* resp = get_http_response_from_arg(vm, args[3]);
+                result = url ? http_post(url, (const uint8_t*)(uintptr_t)args[1], (uint32_t)args[2],
+                    resp) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_HTTP_SEND:
+            {
+                http_response_t* resp = get_http_response_from_arg(vm, args[1]);
+                result = resp ? http_send((http_request_t*)(uintptr_t)args[0], resp) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_HTTP_DOWNLOAD:
+            {
+                const char* url = akm_vm_get_string(vm, args[0]);
+                const char* path = akm_vm_get_string(vm, args[1]);
+                result = (url && path) ? http_download(url, path) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_HTTP_STATUS_TEXT:
+            {
+                const char* txt = http_status_text(args[0]);
+                result = txt ? (int32_t)(uintptr_t)txt : 0;
+            }
+            break;
+
+        case AKM_API_HTTP_REQ_CREATE:
+            {
+                const char* method = akm_vm_get_string(vm, args[0]);
+                const char* url = akm_vm_get_string(vm, args[1]);
+                http_request_t* req = (method && url) ? http_request_create(method, url) : 0;
+                result = req ? (int32_t)(uintptr_t)req : 0;
+            }
+            break;
+
+        case AKM_API_HTTP_REQ_FREE:
+            http_request_free((http_request_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_HTTP_REQ_ADD_HEADER:
+            {
+                const char* name = akm_vm_get_string(vm, args[1]);
+                const char* value = akm_vm_get_string(vm, args[2]);
+                result = (name && value) ? http_request_add_header((http_request_t*)(uintptr_t)args[0], name, value) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_HTTP_REQ_SET_BODY:
+            result = http_request_set_body((http_request_t*)(uintptr_t)args[0],
+                (const uint8_t*)(uintptr_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_HTTP_RESP_CREATE:
+            {
+                http_response_t* resp = http_response_create();
+                if (!resp) {
+                    result = 0;
+                    break;
+                }
+                result = alloc_http_response_handle(vm, resp);
+                if (result == 0) {
+                    http_response_free(resp);
+                }
+            }
+            break;
+
+        case AKM_API_HTTP_RESP_FREE:
+            free_http_response_handle(vm, args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_HTTP_RESP_GET_HEADER:
+            {
+                http_response_t* resp = get_http_response_from_arg(vm, args[0]);
+                const char* name = akm_vm_get_string(vm, args[1]);
+                const char* val = (resp && name) ? http_response_get_header(resp, name) : 0;
+                result = val ? (int32_t)(uintptr_t)val : 0;
+            }
+            break;
+
+        case AKM_API_TLS_INIT:
+            tls_init();
+            result = 0;
+            break;
+
+        case AKM_API_TLS_SESSION_CREATE:
+            {
+                const char* host = akm_vm_get_string(vm, args[1]);
+                tls_session_t* sess = tls_session_create((tcp_socket_t*)(uintptr_t)args[0], host);
+                result = sess ? (int32_t)(uintptr_t)sess : 0;
+            }
+            break;
+
+        case AKM_API_TLS_HANDSHAKE:
+            result = tls_handshake((tls_session_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_TLS_SEND:
+            result = tls_send((tls_session_t*)(uintptr_t)args[0],
+                (const uint8_t*)(uintptr_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_TLS_RECV:
+            result = tls_recv((tls_session_t*)(uintptr_t)args[0],
+                (uint8_t*)(uintptr_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_TLS_SESSION_CLOSE:
+            tls_session_close((tls_session_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_TLS_SESSION_FREE:
+            tls_session_free((tls_session_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_TLS_SET_VERIFY:
+            tls_set_verify((tls_session_t*)(uintptr_t)args[0], (uint8_t)args[1]);
+            result = 0;
+            break;
+
+        case AKM_API_NAT_INIT:
+            nat_init();
+            result = 0;
+            break;
+
+        case AKM_API_NAT_ENABLE:
+            result = nat_enable((nat_type_t)args[0]);
+            break;
+
+        case AKM_API_NAT_DISABLE:
+            result = nat_disable();
+            break;
+
+        case AKM_API_NAT_IS_ENABLED:
+            result = nat_is_enabled();
+            break;
+
+        case AKM_API_NAT_SET_INTERNAL_IF:
+            result = nat_set_internal_interface((net_interface_t*)(uintptr_t)args[0],
+                (uint32_t)args[1], (uint32_t)args[2]);
+            break;
+
+        case AKM_API_NAT_SET_EXTERNAL_IF:
+            result = nat_set_external_interface((net_interface_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_NAT_SET_EXTERNAL_IP:
+            result = nat_set_external_ip((uint32_t)args[0]);
+            break;
+
+        case AKM_API_NAT_PROCESS_OUT:
+            result = nat_process_outgoing((net_packet_t*)(uintptr_t)args[0], (net_interface_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_NAT_PROCESS_IN:
+            result = nat_process_incoming((net_packet_t*)(uintptr_t)args[0], (net_interface_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_NAT_ADD_PORT_FWD:
+            {
+                const char* desc = akm_vm_get_string(vm, args[4]);
+                result = nat_add_port_forward((uint8_t)args[0], (uint16_t)args[1],
+                    (uint32_t)args[2], (uint16_t)args[3], desc ? desc : "");
+            }
+            break;
+
+        case AKM_API_NAT_REMOVE_PORT_FWD:
+            result = nat_remove_port_forward((uint16_t)args[0], (uint8_t)args[1]);
+            break;
+
+        case AKM_API_NAT_LIST_PORT_FWD:
+            result = nat_list_port_forwards((nat_port_forward_t*)(uintptr_t)args[0], args[1]);
+            break;
+
+        case AKM_API_NAT_GET_STATS:
+            nat_get_stats((nat_stats_t*)(uintptr_t)args[0]);
+            result = 0;
+            break;
+
+        case AKM_API_NAT_GET_CONFIG:
+            {
+                nat_config_t* cfg = nat_get_config();
+                result = cfg ? (int32_t)(uintptr_t)cfg : 0;
+            }
+            break;
+
+        case AKM_API_NAT_DUMP_TABLE:
+            nat_dump_table();
+            result = 0;
+            break;
+
+        case AKM_API_NAT_TIMER_TICK:
+            nat_timer_tick();
+            result = 0;
+            break;
+
+        case AKM_API_LOOPBACK_INIT:
+            loopback_init();
+            result = 0;
+            break;
+
+        case AKM_API_LOOPBACK_GET_IF:
+            {
+                net_interface_t* iface = loopback_get_interface();
+                result = iface ? (int32_t)(uintptr_t)iface : 0;
+            }
+            break;
+
+        case AKM_API_NETCONFIG_INIT:
+            netconfig_init();
+            result = 0;
+            break;
+
+        case AKM_API_NETCONFIG_GET:
+            {
+                netconfig_t* cfg = netconfig_get((net_interface_t*)(uintptr_t)args[0]);
+                result = cfg ? (int32_t)(uintptr_t)cfg : 0;
+            }
+            break;
+
+        case AKM_API_NETCONFIG_SET:
+            result = netconfig_set((net_interface_t*)(uintptr_t)args[0], (netconfig_t*)(uintptr_t)args[1]);
+            break;
+
+        case AKM_API_NETCONFIG_SET_STATIC:
+            result = netconfig_set_static((net_interface_t*)(uintptr_t)args[0], (uint32_t)args[1],
+                (uint32_t)args[2], (uint32_t)args[3], (uint32_t)args[4]);
+            break;
+
+        case AKM_API_NETCONFIG_SET_DHCP:
+            result = netconfig_set_dhcp((net_interface_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_NETCONFIG_APPLY:
+            result = netconfig_apply((net_interface_t*)(uintptr_t)args[0]);
+            break;
+
+        case AKM_API_NETCONFIG_SAVE:
+            {
+                const char* path = akm_vm_get_string(vm, args[0]);
+                result = path ? netconfig_save(path) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_NETCONFIG_LOAD:
+            {
+                const char* path = akm_vm_get_string(vm, args[0]);
+                result = path ? netconfig_load(path) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_NETCONFIG_GET_HOSTNAME:
+            {
+                const char* hn = netconfig_get_hostname();
+                result = hn ? (int32_t)(uintptr_t)hn : 0;
+            }
+            break;
+
+        case AKM_API_NETCONFIG_SET_HOSTNAME:
+            {
+                const char* hn = akm_vm_get_string(vm, args[0]);
+                result = hn ? netconfig_set_hostname(hn) : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_NETCONFIG_SET_DNS:
+            result = netconfig_set_dns((uint32_t)args[0], (uint32_t)args[1]);
+            break;
+
+        case AKM_API_NETCONFIG_GET_DNS:
+            netconfig_get_dns((uint32_t*)(uintptr_t)args[0], (uint32_t*)(uintptr_t)args[1]);
+            result = 0;
+            break;
+
+        case AKM_API_HTTP_RESP_GET_STATUS:
+            {
+                http_response_t* resp = get_http_response_from_arg(vm, args[0]);
+                result = resp ? resp->status_code : KMOD_ERR_INVALID;
+            }
+            break;
+
+        case AKM_API_HTTP_RESP_GET_BODY:
+            {
+                http_response_t* resp = get_http_response_from_arg(vm, args[0]);
+                result = (resp && resp->body) ? (int32_t)(uintptr_t)resp->body : 0;
             }
             break;
             
