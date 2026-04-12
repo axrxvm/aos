@@ -275,6 +275,22 @@ run-sn-user: iso-arch
 		-drive file=$(DISK_IMG),format=raw,index=0,media=disk \
 		-netdev user,id=net0 -device e1000,netdev=net0,mac=52:54:00:12:34:56 | tee serial.log
 
+# Run with user-mode networking using VirtIO-Net PCI
+run-sn-user-virtio: iso-arch
+	@echo "Checking for disk image..."
+	@if [ ! -f $(DISK_IMG) ]; then \
+		echo "Creating 100MB disk image at $(DISK_IMG)..."; \
+		dd if=/dev/zero of=$(DISK_IMG) bs=1M count=100 2>/dev/null; \
+		echo "Disk image created."; \
+	else \
+		echo "Using existing disk image at $(DISK_IMG)"; \
+	fi
+	@echo "Running in QEMU ($(ARCH)) with storage + VirtIO user-mode networking..."
+	@echo "Serial output will be saved to serial.log"
+	qemu-system-$(QEMU_ARCH) -cdrom $(ISO) -m 128M -boot d -serial stdio \
+		-drive file=$(DISK_IMG),format=raw,index=0,media=disk \
+		-netdev user,id=net0 -device virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56 | tee serial.log
+
 # Run from disk image only (no ISO attached)
 run-disk:
 	@echo "Checking for disk image..."
@@ -295,4 +311,4 @@ arch-info:
 	@echo "LDFLAGS: $(LDFLAGS)"
 
 # Phony targets
-.PHONY: all iso iso-arch iso-all run run-vga run-nographic run-debug run-s run-sn run-sn-user run-disk clean arch-info
+.PHONY: all iso iso-arch iso-all run run-vga run-nographic run-debug run-s run-sn run-sn-user run-sn-user-virtio run-disk clean arch-info

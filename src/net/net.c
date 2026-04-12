@@ -261,12 +261,14 @@ void net_poll(void) {
      * Cooperative polling loop used when interrupt-driven networking is not
      * yet fully wired or when running in simplified emulation setups.
      */
-    // Poll hardware for incoming packets (both drivers)
+    // Poll hardware for incoming packets (all active NIC drivers)
     extern void e1000_handle_interrupt(void);
     extern void pcnet_handle_interrupt(void);
+    extern void virtio_net_handle_interrupt(void);
     
     e1000_handle_interrupt();
     pcnet_handle_interrupt();
+    virtio_net_handle_interrupt();
     
     // Process pending ARP resolutions
     ipv4_process_pending();

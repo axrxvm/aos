@@ -65,6 +65,7 @@
 #include <dev/pci.h>   // For PCI bus (v0.8.0)
 #include <dev/e1000.h> // For e1000 NIC driver (v0.8.0)
 #include <dev/pcnet.h> // For PCnet NIC driver (v0.8.1)
+#include <dev/virtio_net.h> // For VirtIO-Net NIC driver
 #include <acpi.h>      // For ACPI power management (v0.8.2)
 #include <apm.h>       // For aOS Package Manager (v0.8.5)
 #include <krm.h>       // For Kernel Recovery Mode (v0.8.8)
@@ -357,6 +358,7 @@ void kernel_main(uint32_t multiboot_magic, void *raw_boot_info) {
     // Try e1000 first, then PCnet 
     e1000_init();
     pcnet_init();  // PCnet-PCI II / PCnet-FAST III driver (
+    virtio_net_init();
     
     // Initialize Virtual File System
     serial_puts("About to initialize VFS...\n");
